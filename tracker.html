@@ -1,1 +1,1785 @@
+from pathlib import Path
+p=Path("/mnt/data/tracker-add-remove.html")
+html=p.read_text(encoding="utf-8")
+
+# CSS: append new styles before closing style, and remove prior inline control layout overrides
+html=html.replace("""
+/* Minimal subject/chapter management controls */
+.manage-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 18px}
+.manage-row input{border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:13px;padding:12px 14px;font:inherit;font-size:14px;min-width:0;flex:1}
+.manage-row button,.chapter-delete,.subject-delete{border:1px solid var(--line);border-radius:999px;padding:10px 14px;background:var(--surface);color:var(--ink);font:inherit;font-size:12px;font-weight:700;cursor:pointer}
+.manage-row button.primary-manage{background:var(--blue);color:white;border-color:var(--blue)}
+.chapter-delete,.subject-delete{color:#c0392b;background:var(--surface)}
+.subject{position:relative}
+.subject .subject-delete{margin-top:10px}
+.chapter-row{grid-template-columns:minmax(0,1fr) auto minmax(300px,390px)}
+.chapter-row .chapter-delete{white-space:nowrap}
+@media(max-width:800px){.chapter-row{grid-template-columns:1fr auto}.chapter-row .status-switch{grid-column:1/-1}.chapter-row .chapter-delete{justify-self:start}}
+@media(max-width:480px){.chapter-row{grid-template-columns:1fr auto}}
+""", """
+/* Bottom-only subject/chapter manager */
+.manage-panel{background:var(--surface);border:1px solid var(--line);border-radius:24px;padding:clamp(18px,4vw,30px)}
+.manage-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.manage-card{border:1px solid var(--line);border-radius:18px;padding:18px;background:var(--paper)}
+.manage-card h3{margin:0 0 7px;font-size:19px}
+.manage-card p{color:var(--muted);font-size:13px;margin:0 0 15px}
+.manage-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:10px 0}
+.manage-row input,.manage-row select{border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:13px;padding:12px 14px;font:inherit;font-size:14px;min-width:0;flex:1;width:100%}
+.manage-row button{border:1px solid var(--line);border-radius:999px;padding:11px 14px;background:var(--surface);color:var(--ink);font:inherit;font-size:12px;font-weight:700;cursor:pointer}
+.manage-row button.primary-manage{background:var(--blue);color:white;border-color:var(--blue)}
+.manage-row button.remove-manage{color:#c0392b}
+.manage-row button:disabled{opacity:.4;cursor:not-allowed}
+.chapter-row{grid-template-columns:minmax(180px,1fr) minmax(300px,390px);gap:18px}
+.status-switch{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;padding:4px;border:1px solid var(--line);border-radius:15px;background:var(--surface-soft)}
+.status-switch button{appearance:none;border:0;border-radius:10px;background:transparent;color:var(--muted);font:inherit;font-size:12px;font-weight:700;line-height:1.2;padding:11px 7px;min-height:40px;cursor:pointer;transition:background .18s ease,color .18s ease,box-shadow .18s ease}
+.status-switch button:hover{color:var(--ink)}
+.status-switch button[aria-pressed="true"]{background:#536dfe;color:#fff;box-shadow:0 3px 10px #536dfe30}
+.status-switch button[data-status="পড়ছি"][aria-pressed="true"]{background:#d99518;color:#fff;box-shadow:0 3px 10px #d9951830}
+.status-switch button[data-status="পড়া শেষ"][aria-pressed="true"]{background:#159a70;color:#fff;box-shadow:0 3px 10px #159a7030}
+[data-theme="dark"] .status-switch{background:var(--surface-soft);border-color:var(--line)}
+[data-theme="dark"] .status-switch button[aria-pressed="true"]{color:#fff}
+@media(max-width:800px){.manage-grid{grid-template-columns:1fr}.chapter-row{grid-template-columns:1fr;gap:10px;padding:17px 0}.status-switch{width:100%;max-width:430px}.status-switch button{font-size:12px;padding:10px 5px}}
+@media(max-width:480px){.status-switch{max-width:none}.status-switch button{font-size:11px;padding:9px 2px}}
+""",1)
+
+# Remove management inputs from subjects and chapters sections; put manager section at the very bottom before quote/footer
+html=html.replace('<div class="manage-row"><input id="newSubjectName" maxlength="70" placeholder="Add a subject name..."><button class="primary-manage" type="button" onclick="addSubject()">+ Add subject</button></div><div class="subject-grid" id="subjectGrid"></div>',
+                  '<div class="subject-grid" id="subjectGrid"></div>')
+html=html.replace('<div class="manage-row"><input id="newChapterName" maxlength="100" placeholder="Add a chapter to selected subject..."><button class="primary-manage" type="button" onclick="addChapter()">+ Add chapter</button></div><div class="tools">',
+                  '<div class="tools">')
+manager = '''
+<section class="section wrap" id="manage">
+  <div class="section-head reveal"><div><div class="eyebrow">Manage your content</div><h2>Make it yours.</h2><p class="sub">সব যোগ, এডিট ও ডিলিট করার অপশন শুধু এই নিচের অংশে থাকবে।</p></div></div>
+  <div class="manage-panel reveal">
+    <div class="manage-grid">
+      <div class="manage-card">
+        <h3>Subjects</h3><p>সাবজেক্ট যোগ, নাম পরিবর্তন অথবা মুছে ফেলো।</p>
+        <div class="manage-row"><input id="newSubjectName" maxlength="70" placeholder="নতুন সাবজেক্টের নাম"><button class="primary-manage" type="button" onclick="addSubject()">＋ যোগ</button></div>
+        <div class="manage-row"><select id="manageSubjectSelect" aria-label="সাবজেক্ট বেছে নাও"></select></div>
+        <div class="manage-row"><input id="renameSubjectName" maxlength="70" placeholder="নতুন নাম লিখে এডিট করো"></div>
+        <div class="manage-row"><button type="button" onclick="renameSubject()">নাম পরিবর্তন</button><button class="remove-manage" type="button" onclick="deleteSelectedSubject()">সাবজেক্ট ডিলিট</button></div>
+      </div>
+      <div class="manage-card">
+        <h3>Chapters</h3><p>সাবজেক্ট বেছে নিয়ে চ্যাপ্টার যোগ, এডিট অথবা মুছে ফেলো।</p>
+        <div class="manage-row"><select id="manageChapterSubject" aria-label="চ্যাপ্টারের সাবজেক্ট"></select></div>
+        <div class="manage-row"><input id="newChapterName" maxlength="100" placeholder="নতুন চ্যাপ্টারের নাম"><button class="primary-manage" type="button" onclick="addChapter()">＋ যোগ</button></div>
+        <div class="manage-row"><select id="manageChapterSelect" aria-label="এডিট বা ডিলিটের চ্যাপ্টার"></select></div>
+        <div class="manage-row"><input id="renameChapterName" maxlength="100" placeholder="নতুন চ্যাপ্টারের নাম"></div>
+        <div class="manage-row"><button type="button" onclick="renameChapter()">নাম পরিবর্তন</button><button class="remove-manage" type="button" onclick="deleteSelectedChapter()">চ্যাপ্টার ডিলিট</button></div>
+      </div>
+    </div>
+  </div>
+</section>
+'''
+html=html.replace('<section class="quote wrap reveal">', manager+'\\n<section class="quote wrap reveal">',1)
+
+# Remove inline subject delete button, keeping subject cards clean
+old='''<button class="subject-delete" type="button" onclick="event.stopPropagation();deleteSubject('${s.replace(/'/g, "\\\\'")}')">Remove subject</button>'''
+html=html.replace(old,'')
+
+# replace renderSubjects to update manager selectors too
+old='''  const select=document.getElementById('subjectFilter');
+  const current=select.value;
+  select.innerHTML=Object.keys(chapters).map(s=>`<option>${escapeText(s)}</option>`).join('');
+  if(chapters[current]) select.value=current;
+  else if(Object.keys(chapters).length) select.value=Object.keys(chapters)[0];
+}'''
+new='''  const select=document.getElementById('subjectFilter');
+  const current=select.value;
+  select.innerHTML=Object.keys(chapters).map(s=>`<option>${escapeText(s)}</option>`).join('');
+  if(chapters[current]) select.value=current;
+  else if(Object.keys(chapters).length) select.value=Object.keys(chapters)[0];
+  const manageSubject=document.getElementById('manageSubjectSelect');
+  const manageChapterSubject=document.getElementById('manageChapterSubject');
+  const oldManageSubject=manageSubject.value, oldChapterSubject=manageChapterSubject.value;
+  const options=Object.keys(chapters).map(s=>`<option value="${escapeText(s)}">${escapeText(s)}</option>`).join('');
+  manageSubject.innerHTML=options || '<option value="">কোনো সাবজেক্ট নেই</option>';
+  manageChapterSubject.innerHTML=options || '<option value="">কোনো সাবজেক্ট নেই</option>';
+  if(chapters[oldManageSubject]) manageSubject.value=oldManageSubject;
+  if(chapters[oldChapterSubject]) manageChapterSubject.value=oldChapterSubject;
+  updateManagedChapterOptions();
+}'''
+if old not in html: print("renderSubjects pattern missing")
+html=html.replace(old,new,1)
+
+# replace add/delete chapter functions and add manager helpers
+old='''function addSubject(){
+  const input=document.getElementById('newSubjectName'), name=input.value.trim();
+  if(!name){input.focus();return}
+  if(Object.keys(chapters).some(s=>s.toLowerCase()===name.toLowerCase())){alert('This subject already exists.');return}
+  chapters[name]=[];
+  input.value=''; saveChapters(); renderSubjects(); render(); 
+}
+function deleteSubject(name){
+  if(!confirm(`Remove subject "${name}" and all its chapters?`)) return;
+  delete chapters[name];
+  Object.keys(states).forEach(k=>{if(k.startsWith(name+'|')) delete states[k]});
+  saveChapters(); saveStates(); renderSubjects(); render();
+}
+function addChapter(){
+  const input=document.getElementById('newChapterName'), name=input.value.trim();
+  const subject=document.getElementById('subjectFilter').value;
+  if(!name){input.focus();return}
+  if(!chapters[subject]){alert('Add a subject first.');return}
+  if(chapters[subject].some(c=>c.toLowerCase()===name.toLowerCase())){alert('This chapter already exists.');return}
+  chapters[subject].push(name); input.value=''; saveChapters(); render();
+}
+function deleteChapter(subject,name){
+  if(!confirm(`Remove chapter "${name}"?`)) return;
+  chapters[subject]=chapters[subject].filter(c=>c!==name);
+  delete states[subject+'|'+name]; saveChapters(); saveStates(); render();
+}'''
+new='''function addSubject(){
+  const input=document.getElementById('newSubjectName'), name=input.value.trim();
+  if(!name){input.focus();return}
+  if(Object.keys(chapters).some(s=>s.toLowerCase()===name.toLowerCase())){alert('এই সাবজেক্ট আগে থেকেই আছে।');return}
+  chapters[name]=[];
+  input.value=''; saveChapters(); renderSubjects(); render(); showManageMessage('সাবজেক্ট যোগ হয়েছে');
+}
+function deleteSubject(name){
+  if(!confirm(`“${name}” এবং এর সব চ্যাপ্টার ডিলিট করতে চাও?`)) return;
+  delete chapters[name];
+  Object.keys(states).forEach(k=>{if(k.startsWith(name+'|')) delete states[k]});
+  saveChapters(); saveStates(); renderSubjects(); render(); showManageMessage('সাবজেক্ট ডিলিট হয়েছে');
+}
+function deleteSelectedSubject(){
+  const name=document.getElementById('manageSubjectSelect').value;
+  if(name) deleteSubject(name);
+}
+function renameSubject(){
+  const oldName=document.getElementById('manageSubjectSelect').value;
+  const input=document.getElementById('renameSubjectName'), newName=input.value.trim();
+  if(!oldName || !newName){input.focus();return}
+  if(newName===oldName){showManageMessage('নাম একই আছে');return}
+  if(Object.keys(chapters).some(s=>s.toLowerCase()===newName.toLowerCase())){alert('এই নামে সাবজেক্ট আগে থেকেই আছে।');return}
+  const rebuilt={}; Object.keys(chapters).forEach(s=>{rebuilt[s===oldName?newName:s]=chapters[s]}); chapters=rebuilt;
+  Object.keys(states).forEach(k=>{if(k.startsWith(oldName+'|')){states[newName+k.slice(oldName.length)]=states[k];delete states[k]}});
+  saveChapters();saveStates();input.value='';renderSubjects();document.getElementById('subjectFilter').value=newName;document.getElementById('manageSubjectSelect').value=newName;document.getElementById('manageChapterSubject').value=newName;render();showManageMessage('সাবজেক্টের নাম বদলেছে');
+}
+function addChapter(){
+  const input=document.getElementById('newChapterName'), name=input.value.trim();
+  const subject=document.getElementById('manageChapterSubject').value;
+  if(!name){input.focus();return}
+  if(!subject || !chapters[subject]){alert('আগে একটি সাবজেক্ট যোগ করো।');return}
+  if(chapters[subject].some(c=>c.toLowerCase()===name.toLowerCase())){alert('এই চ্যাপ্টার আগে থেকেই আছে।');return}
+  chapters[subject].push(name); input.value=''; saveChapters(); renderSubjects();document.getElementById('subjectFilter').value=subject;render();showManageMessage('চ্যাপ্টার যোগ হয়েছে');
+}
+function updateManagedChapterOptions(){
+  const subject=document.getElementById('manageChapterSubject')?.value;
+  const select=document.getElementById('manageChapterSelect');
+  if(!select)return;
+  const old=select.value, arr=chapters[subject]||[];
+  select.innerHTML=arr.map(c=>`<option value="${escapeText(c)}">${escapeText(c)}</option>`).join('') || '<option value="">কোনো চ্যাপ্টার নেই</option>';
+  if(arr.includes(old))select.value=old;
+  const selected=select.value;
+  const rename=document.getElementById('renameChapterName');
+  if(rename && selected && !rename.dataset.edited) rename.value=selected;
+}
+function renameChapter(){
+  const subject=document.getElementById('manageChapterSubject').value;
+  const oldName=document.getElementById('manageChapterSelect').value;
+  const input=document.getElementById('renameChapterName'),newName=input.value.trim();
+  if(!subject||!oldName||!newName){input.focus();return}
+  if(newName===oldName){showManageMessage('নাম একই আছে');return}
+  if((chapters[subject]||[]).some(c=>c.toLowerCase()===newName.toLowerCase())){alert('এই নামে চ্যাপ্টার আগে থেকেই আছে।');return}
+  chapters[subject]=chapters[subject].map(c=>c===oldName?newName:c);
+  if(states[subject+'|'+oldName]!==undefined){states[subject+'|'+newName]=states[subject+'|'+oldName];delete states[subject+'|'+oldName]}
+  saveChapters();saveStates();renderSubjects();document.getElementById('subjectFilter').value=subject;render();updateManagedChapterOptions();showManageMessage('চ্যাপ্টারের নাম বদলেছে');
+}
+function deleteSelectedChapter(){
+  const subject=document.getElementById('manageChapterSubject').value;
+  const name=document.getElementById('manageChapterSelect').value;
+  if(subject&&name) deleteChapter(subject,name);
+}
+function deleteChapter(subject,name){
+  if(!confirm(`“${name}” চ্যাপ্টারটি ডিলিট করতে চাও?`)) return;
+  chapters[subject]=chapters[subject].filter(c=>c!==name);
+  delete states[subject+'|'+name]; saveChapters(); saveStates(); renderSubjects(); render();updateManagedChapterOptions();showManageMessage('চ্যাপ্টার ডিলিট হয়েছে');
+}
+function showManageMessage(message){const done=document.getElementById('doneText'); if(done)done.textContent=message;}
+document.addEventListener('change',e=>{
+  if(e.target.id==='manageChapterSubject')updateManagedChapterOptions();
+  if(e.target.id==='manageChapterSelect'){const input=document.getElementById('renameChapterName');if(input){input.value=e.target.value;delete input.dataset.edited;}}
+});
+document.getElementById('renameChapterName')?.addEventListener('input',e=>e.target.dataset.edited='1');'''
+if old not in html: print("function pattern missing")
+html=html.replace(old,new,1)
+
+# replace render chapter output with status switch buttons; no inline delete
+old='''else list.innerHTML=arr.map(c=>{const key=s+'|'+c,st=states[key]||'পড়া বাকি';return `<div class="chapter-row"><div>${escapeText(c)}<small>${escapeText(s)}</small></div><button type="button" class="chapter-delete" onclick="deleteChapter('${s.replace(/'/g, "\\\\'")}','${c.replace(/'/g, "\\\\'")}')">Remove</button><select aria-label="Status for ${c}" onchange="setStatus('${encodeURIComponent(key)}',this.value)"><option ${st==='পড়া বাকি'?'selected':''}>পড়া বাকি</option><option ${st==='পড়ছি'?'selected':''}>পড়ছি</option><option ${st==='পড়া শেষ'?'selected':''}>পড়া শেষ</option></select></div>`}).join('');updateProgress()}'''
+new='''else list.innerHTML=arr.map(c=>{const key=s+'|'+c,st=states[key]||'পড়া বাকি';const statuses=['পড়া বাকি','পড়ছি','পড়া শেষ'];return `<div class="chapter-row"><div>${escapeText(c)}<small>${escapeText(s)}</small></div><div class="status-switch" role="group" aria-label="${escapeText(c)} পড়ার অবস্থা">${statuses.map(status=>`<button type="button" data-status="${status}" aria-pressed="${st===status}" aria-label="${escapeText(c)}: ${status}" onclick="setStatus('${encodeURIComponent(key)}','${status}')">${status}</button>`).join('')}</div></div>`}).join('');updateProgress()}'''
+if old not in html: print("render pattern missing")
+html=html.replace(old,new,1)
+
+# add nav anchor to bottom manager
+html=html.replace('<a href="#chapters">Chapters</a></div>', '<a href="#chapters">Chapters</a><a href="#manage">Manage</a></div>',1)
+
+# update subjectFilter changes: sync manager chapter subject when selecting chapters normally is fine; management section selection remains independent.
+# Make chapter rename field follow selected chapter on initial and on selection.
+html=html.replace("renderSubjects();render();", "renderSubjects();render();updateManagedChapterOptions();", 1)
+
+out=Path("/mnt/data/tracker-managed-bottom.html")
+out.write_text(html,encoding="utf-8")
+print(out, out.stat().st_size)
+from pathlib import Path
+p=Path("/mnt/data/tracker-add-remove.html")
+html=p.read_text(encoding="utf-8")
+
+# CSS: append new styles before closing style, and remove prior inline control layout overrides
+html=html.replace("""
+/* Minimal subject/chapter management controls */
+.manage-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 18px}
+.manage-row input{border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:13px;padding:12px 14px;font:inherit;font-size:14px;min-width:0;flex:1}
+.manage-row button,.chapter-delete,.subject-delete{border:1px solid var(--line);border-radius:999px;padding:10px 14px;background:var(--surface);color:var(--ink);font:inherit;font-size:12px;font-weight:700;cursor:pointer}
+.manage-row button.primary-manage{background:var(--blue);color:white;border-color:var(--blue)}
+.chapter-delete,.subject-delete{color:#c0392b;background:var(--surface)}
+.subject{position:relative}
+.subject .subject-delete{margin-top:10px}
+.chapter-row{grid-template-columns:minmax(0,1fr) auto minmax(300px,390px)}
+.chapter-row .chapter-delete{white-space:nowrap}
+@media(max-width:800px){.chapter-row{grid-template-columns:1fr auto}.chapter-row .status-switch{grid-column:1/-1}.chapter-row .chapter-delete{justify-self:start}}
+@media(max-width:480px){.chapter-row{grid-template-columns:1fr auto}}
+""", """
+/* Bottom-only subject/chapter manager */
+.manage-panel{background:var(--surface);border:1px solid var(--line);border-radius:24px;padding:clamp(18px,4vw,30px)}
+.manage-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.manage-card{border:1px solid var(--line);border-radius:18px;padding:18px;background:var(--paper)}
+.manage-card h3{margin:0 0 7px;font-size:19px}
+.manage-card p{color:var(--muted);font-size:13px;margin:0 0 15px}
+.manage-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:10px 0}
+.manage-row input,.manage-row select{border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:13px;padding:12px 14px;font:inherit;font-size:14px;min-width:0;flex:1;width:100%}
+.manage-row button{border:1px solid var(--line);border-radius:999px;padding:11px 14px;background:var(--surface);color:var(--ink);font:inherit;font-size:12px;font-weight:700;cursor:pointer}
+.manage-row button.primary-manage{background:var(--blue);color:white;border-color:var(--blue)}
+.manage-row button.remove-manage{color:#c0392b}
+.manage-row button:disabled{opacity:.4;cursor:not-allowed}
+.chapter-row{grid-template-columns:minmax(180px,1fr) minmax(300px,390px);gap:18px}
+.status-switch{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;padding:4px;border:1px solid var(--line);border-radius:15px;background:var(--surface-soft)}
+.status-switch button{appearance:none;border:0;border-radius:10px;background:transparent;color:var(--muted);font:inherit;font-size:12px;font-weight:700;line-height:1.2;padding:11px 7px;min-height:40px;cursor:pointer;transition:background .18s ease,color .18s ease,box-shadow .18s ease}
+.status-switch button:hover{color:var(--ink)}
+.status-switch button[aria-pressed="true"]{background:#536dfe;color:#fff;box-shadow:0 3px 10px #536dfe30}
+.status-switch button[data-status="পড়ছি"][aria-pressed="true"]{background:#d99518;color:#fff;box-shadow:0 3px 10px #d9951830}
+.status-switch button[data-status="পড়া শেষ"][aria-pressed="true"]{background:#159a70;color:#fff;box-shadow:0 3px 10px #159a7030}
+[data-theme="dark"] .status-switch{background:var(--surface-soft);border-color:var(--line)}
+[data-theme="dark"] .status-switch button[aria-pressed="true"]{color:#fff}
+@media(max-width:800px){.manage-grid{grid-template-columns:1fr}.chapter-row{grid-template-columns:1fr;gap:10px;padding:17px 0}.status-switch{width:100%;max-width:430px}.status-switch button{font-size:12px;padding:10px 5px}}
+@media(max-width:480px){.status-switch{max-width:none}.status-switch button{font-size:11px;padding:9px 2px}}
+""",1)
+
+# Remove management inputs from subjects and chapters sections; put manager section at the very bottom before quote/footer
+html=html.replace('<div class="manage-row"><input id="newSubjectName" maxlength="70" placeholder="Add a subject name..."><button class="primary-manage" type="button" onclick="addSubject()">+ Add subject</button></div><div class="subject-grid" id="subjectGrid"></div>',
+                  '<div class="subject-grid" id="subjectGrid"></div>')
+html=html.replace('<div class="manage-row"><input id="newChapterName" maxlength="100" placeholder="Add a chapter to selected subject..."><button class="primary-manage" type="button" onclick="addChapter()">+ Add chapter</button></div><div class="tools">',
+                  '<div class="tools">')
+manager = '''
+<section class="section wrap" id="manage">
+  <div class="section-head reveal"><div><div class="eyebrow">Manage your content</div><h2>Make it yours.</h2><p class="sub">সব যোগ, এডিট ও ডিলিট করার অপশন শুধু এই নিচের অংশে থাকবে।</p></div></div>
+  <div class="manage-panel reveal">
+    <div class="manage-grid">
+      <div class="manage-card">
+        <h3>Subjects</h3><p>সাবজেক্ট যোগ, নাম পরিবর্তন অথবা মুছে ফেলো।</p>
+        <div class="manage-row"><input id="newSubjectName" maxlength="70" placeholder="নতুন সাবজেক্টের নাম"><button class="primary-manage" type="button" onclick="addSubject()">＋ যোগ</button></div>
+        <div class="manage-row"><select id="manageSubjectSelect" aria-label="সাবজেক্ট বেছে নাও"></select></div>
+        <div class="manage-row"><input id="renameSubjectName" maxlength="70" placeholder="নতুন নাম লিখে এডিট করো"></div>
+        <div class="manage-row"><button type="button" onclick="renameSubject()">নাম পরিবর্তন</button><button class="remove-manage" type="button" onclick="deleteSelectedSubject()">সাবজেক্ট ডিলিট</button></div>
+      </div>
+      <div class="manage-card">
+        <h3>Chapters</h3><p>সাবজেক্ট বেছে নিয়ে চ্যাপ্টার যোগ, এডিট অথবা মুছে ফেলো।</p>
+        <div class="manage-row"><select id="manageChapterSubject" aria-label="চ্যাপ্টারের সাবজেক্ট"></select></div>
+        <div class="manage-row"><input id="newChapterName" maxlength="100" placeholder="নতুন চ্যাপ্টারের নাম"><button class="primary-manage" type="button" onclick="addChapter()">＋ যোগ</button></div>
+        <div class="manage-row"><select id="manageChapterSelect" aria-label="এডিট বা ডিলিটের চ্যাপ্টার"></select></div>
+        <div class="manage-row"><input id="renameChapterName" maxlength="100" placeholder="নতুন চ্যাপ্টারের নাম"></div>
+        <div class="manage-row"><button type="button" onclick="renameChapter()">নাম পরিবর্তন</button><button class="remove-manage" type="button" onclick="deleteSelectedChapter()">চ্যাপ্টার ডিলিট</button></div>
+      </div>
+    </div>
+  </div>
+</section>
+'''
+html=html.replace('<section class="quote wrap reveal">', manager+'\\n<section class="quote wrap reveal">',1)
+
+# Remove inline subject delete button, keeping subject cards clean
+old='''<button class="subject-delete" type="button" onclick="event.stopPropagation();deleteSubject('${s.replace(/'/g, "\\\\'")}')">Remove subject</button>'''
+html=html.replace(old,'')
+
+# replace renderSubjects to update manager selectors too
+old='''  const select=document.getElementById('subjectFilter');
+  const current=select.value;
+  select.innerHTML=Object.keys(chapters).map(s=>`<option>${escapeText(s)}</option>`).join('');
+  if(chapters[current]) select.value=current;
+  else if(Object.keys(chapters).length) select.value=Object.keys(chapters)[0];
+}'''
+new='''  const select=document.getElementById('subjectFilter');
+  const current=select.value;
+  select.innerHTML=Object.keys(chapters).map(s=>`<option>${escapeText(s)}</option>`).join('');
+  if(chapters[current]) select.value=current;
+  else if(Object.keys(chapters).length) select.value=Object.keys(chapters)[0];
+  const manageSubject=document.getElementById('manageSubjectSelect');
+  const manageChapterSubject=document.getElementById('manageChapterSubject');
+  const oldManageSubject=manageSubject.value, oldChapterSubject=manageChapterSubject.value;
+  const options=Object.keys(chapters).map(s=>`<option value="${escapeText(s)}">${escapeText(s)}</option>`).join('');
+  manageSubject.innerHTML=options || '<option value="">কোনো সাবজেক্ট নেই</option>';
+  manageChapterSubject.innerHTML=options || '<option value="">কোনো সাবজেক্ট নেই</option>';
+  if(chapters[oldManageSubject]) manageSubject.value=oldManageSubject;
+  if(chapters[oldChapterSubject]) manageChapterSubject.value=oldChapterSubject;
+  updateManagedChapterOptions();
+}'''
+if old not in html: print("renderSubjects pattern missing")
+html=html.replace(old,new,1)
+
+# replace add/delete chapter functions and add manager helpers
+old='''function addSubject(){
+  const input=document.getElementById('newSubjectName'), name=input.value.trim();
+  if(!name){input.focus();return}
+  if(Object.keys(chapters).some(s=>s.toLowerCase()===name.toLowerCase())){alert('This subject already exists.');return}
+  chapters[name]=[];
+  input.value=''; saveChapters(); renderSubjects(); render(); 
+}
+function deleteSubject(name){
+  if(!confirm(`Remove subject "${name}" and all its chapters?`)) return;
+  delete chapters[name];
+  Object.keys(states).forEach(k=>{if(k.startsWith(name+'|')) delete states[k]});
+  saveChapters(); saveStates(); renderSubjects(); render();
+}
+function addChapter(){
+  const input=document.getElementById('newChapterName'), name=input.value.trim();
+  const subject=document.getElementById('subjectFilter').value;
+  if(!name){input.focus();return}
+  if(!chapters[subject]){alert('Add a subject first.');return}
+  if(chapters[subject].some(c=>c.toLowerCase()===name.toLowerCase())){alert('This chapter already exists.');return}
+  chapters[subject].push(name); input.value=''; saveChapters(); render();
+}
+function deleteChapter(subject,name){
+  if(!confirm(`Remove chapter "${name}"?`)) return;
+  chapters[subject]=chapters[subject].filter(c=>c!==name);
+  delete states[subject+'|'+name]; saveChapters(); saveStates(); render();
+}'''
+new='''function addSubject(){
+  const input=document.getElementById('newSubjectName'), name=input.value.trim();
+  if(!name){input.focus();return}
+  if(Object.keys(chapters).some(s=>s.toLowerCase()===name.toLowerCase())){alert('এই সাবজেক্ট আগে থেকেই আছে।');return}
+  chapters[name]=[];
+  input.value=''; saveChapters(); renderSubjects(); render(); showManageMessage('সাবজেক্ট যোগ হয়েছে');
+}
+function deleteSubject(name){
+  if(!confirm(`“${name}” এবং এর সব চ্যাপ্টার ডিলিট করতে চাও?`)) return;
+  delete chapters[name];
+  Object.keys(states).forEach(k=>{if(k.startsWith(name+'|')) delete states[k]});
+  saveChapters(); saveStates(); renderSubjects(); render(); showManageMessage('সাবজেক্ট ডিলিট হয়েছে');
+}
+function deleteSelectedSubject(){
+  const name=document.getElementById('manageSubjectSelect').value;
+  if(name) deleteSubject(name);
+}
+function renameSubject(){
+  const oldName=document.getElementById('manageSubjectSelect').value;
+  const input=document.getElementById('renameSubjectName'), newName=input.value.trim();
+  if(!oldName || !newName){input.focus();return}
+  if(newName===oldName){showManageMessage('নাম একই আছে');return}
+  if(Object.keys(chapters).some(s=>s.toLowerCase()===newName.toLowerCase())){alert('এই নামে সাবজেক্ট আগে থেকেই আছে।');return}
+  const rebuilt={}; Object.keys(chapters).forEach(s=>{rebuilt[s===oldName?newName:s]=chapters[s]}); chapters=rebuilt;
+  Object.keys(states).forEach(k=>{if(k.startsWith(oldName+'|')){states[newName+k.slice(oldName.length)]=states[k];delete states[k]}});
+  saveChapters();saveStates();input.value='';renderSubjects();document.getElementById('subjectFilter').value=newName;document.getElementById('manageSubjectSelect').value=newName;document.getElementById('manageChapterSubject').value=newName;render();showManageMessage('সাবজেক্টের নাম বদলেছে');
+}
+function addChapter(){
+  const input=document.getElementById('newChapterName'), name=input.value.trim();
+  const subject=document.getElementById('manageChapterSubject').value;
+  if(!name){input.focus();return}
+  if(!subject || !chapters[subject]){alert('আগে একটি সাবজেক্ট যোগ করো।');return}
+  if(chapters[subject].some(c=>c.toLowerCase()===name.toLowerCase())){alert('এই চ্যাপ্টার আগে থেকেই আছে।');return}
+  chapters[subject].push(name); input.value=''; saveChapters(); renderSubjects();document.getElementById('subjectFilter').value=subject;render();showManageMessage('চ্যাপ্টার যোগ হয়েছে');
+}
+function updateManagedChapterOptions(){
+  const subject=document.getElementById('manageChapterSubject')?.value;
+  const select=document.getElementById('manageChapterSelect');
+  if(!select)return;
+  const old=select.value, arr=chapters[subject]||[];
+  select.innerHTML=arr.map(c=>`<option value="${escapeText(c)}">${escapeText(c)}</option>`).join('') || '<option value="">কোনো চ্যাপ্টার নেই</option>';
+  if(arr.includes(old))select.value=old;
+  const selected=select.value;
+  const rename=document.getElementById('renameChapterName');
+  if(rename && selected && !rename.dataset.edited) rename.value=selected;
+}
+function renameChapter(){
+  const subject=document.getElementById('manageChapterSubject').value;
+  const oldName=document.getElementById('manageChapterSelect').value;
+  const input=document.getElementById('renameChapterName'),newName=input.value.trim();
+  if(!subject||!oldName||!newName){input.focus();return}
+  if(newName===oldName){showManageMessage('নাম একই আছে');return}
+  if((chapters[subject]||[]).some(c=>c.toLowerCase()===newName.toLowerCase())){alert('এই নামে চ্যাপ্টার আগে থেকেই আছে।');return}
+  chapters[subject]=chapters[subject].map(c=>c===oldName?newName:c);
+  if(states[subject+'|'+oldName]!==undefined){states[subject+'|'+newName]=states[subject+'|'+oldName];delete states[subject+'|'+oldName]}
+  saveChapters();saveStates();renderSubjects();document.getElementById('subjectFilter').value=subject;render();updateManagedChapterOptions();showManageMessage('চ্যাপ্টারের নাম বদলেছে');
+}
+function deleteSelectedChapter(){
+  const subject=document.getElementById('manageChapterSubject').value;
+  const name=document.getElementById('manageChapterSelect').value;
+  if(subject&&name) deleteChapter(subject,name);
+}
+function deleteChapter(subject,name){
+  if(!confirm(`“${name}” চ্যাপ্টারটি ডিলিট করতে চাও?`)) return;
+  chapters[subject]=chapters[subject].filter(c=>c!==name);
+  delete states[subject+'|'+name]; saveChapters(); saveStates(); renderSubjects(); render();updateManagedChapterOptions();showManageMessage('চ্যাপ্টার ডিলিট হয়েছে');
+}
+function showManageMessage(message){const done=document.getElementById('doneText'); if(done)done.textContent=message;}
+document.addEventListener('change',e=>{
+  if(e.target.id==='manageChapterSubject')updateManagedChapterOptions();
+  if(e.target.id==='manageChapterSelect'){const input=document.getElementById('renameChapterName');if(input){input.value=e.target.value;delete input.dataset.edited;}}
+});
+document.getElementById('renameChapterName')?.addEventListener('input',e=>e.target.dataset.edited='1');'''
+if old not in html: print("function pattern missing")
+html=html.replace(old,new,1)
+
+# replace render chapter output with status switch buttons; no inline delete
+old='''else list.innerHTML=arr.map(c=>{const key=s+'|'+c,st=states[key]||'পড়া বাকি';return `<div class="chapter-row"><div>${escapeText(c)}<small>${escapeText(s)}</small></div><button type="button" class="chapter-delete" onclick="deleteChapter('${s.replace(/'/g, "\\\\'")}','${c.replace(/'/g, "\\\\'")}')">Remove</button><select aria-label="Status for ${c}" onchange="setStatus('${encodeURIComponent(key)}',this.value)"><option ${st==='পড়া বাকি'?'selected':''}>পড়া বাকি</option><option ${st==='পড়ছি'?'selected':''}>পড়ছি</option><option ${st==='পড়া শেষ'?'selected':''}>পড়া শেষ</option></select></div>`}).join('');updateProgress()}'''
+new='''else list.innerHTML=arr.map(c=>{const key=s+'|'+c,st=states[key]||'পড়া বাকি';const statuses=['পড়া বাকি','পড়ছি','পড়া শেষ'];return `<div class="chapter-row"><div>${escapeText(c)}<small>${escapeText(s)}</small></div><div class="status-switch" role="group" aria-label="${escapeText(c)} পড়ার অবস্থা">${statuses.map(status=>`<button type="button" data-status="${status}" aria-pressed="${st===status}" aria-label="${escapeText(c)}: ${status}" onclick="setStatus('${encodeURIComponent(key)}','${status}')">${status}</button>`).join('')}</div></div>`}).join('');updateProgress()}'''
+if old not in html: print("render pattern missing")
+html=html.replace(old,new,1)
+
+# add nav anchor to bottom manager
+html=html.replace('<a href="#chapters">Chapters</a></div>', '<a href="#chapters">Chapters</a><a href="#manage">Manage</a></div>',1)
+
+# update subjectFilter changes: sync manager chapter subject when selecting chapters normally is fine; management section selection remains independent.
+# Make chapter rename field follow selected chapter on initial and on selection.
+html=html.replace("renderSubjects();render();", "renderSubjects();render();updateManagedChapterOptions();", 1)
+
+out=Path("/mnt/data/tracker-managed-bottom.html")
+out.write_text(html,encoding="utf-8")
+print(out, out.stat().st_size)
+from pathlib import Path
+p=Path("/mnt/data/tracker-add-remove.html")
+html=p.read_text(encoding="utf-8")
+
+# CSS: append new styles before closing style, and remove prior inline control layout overrides
+html=html.replace("""
+/* Minimal subject/chapter management controls */
+.manage-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 18px}
+.manage-row input{border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:13px;padding:12px 14px;font:inherit;font-size:14px;min-width:0;flex:1}
+.manage-row button,.chapter-delete,.subject-delete{border:1px solid var(--line);border-radius:999px;padding:10px 14px;background:var(--surface);color:var(--ink);font:inherit;font-size:12px;font-weight:700;cursor:pointer}
+.manage-row button.primary-manage{background:var(--blue);color:white;border-color:var(--blue)}
+.chapter-delete,.subject-delete{color:#c0392b;background:var(--surface)}
+.subject{position:relative}
+.subject .subject-delete{margin-top:10px}
+.chapter-row{grid-template-columns:minmax(0,1fr) auto minmax(300px,390px)}
+.chapter-row .chapter-delete{white-space:nowrap}
+@media(max-width:800px){.chapter-row{grid-template-columns:1fr auto}.chapter-row .status-switch{grid-column:1/-1}.chapter-row .chapter-delete{justify-self:start}}
+@media(max-width:480px){.chapter-row{grid-template-columns:1fr auto}}
+""", """
+/* Bottom-only subject/chapter manager */
+.manage-panel{background:var(--surface);border:1px solid var(--line);border-radius:24px;padding:clamp(18px,4vw,30px)}
+.manage-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.manage-card{border:1px solid var(--line);border-radius:18px;padding:18px;background:var(--paper)}
+.manage-card h3{margin:0 0 7px;font-size:19px}
+.manage-card p{color:var(--muted);font-size:13px;margin:0 0 15px}
+.manage-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:10px 0}
+.manage-row input,.manage-row select{border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:13px;padding:12px 14px;font:inherit;font-size:14px;min-width:0;flex:1;width:100%}
+.manage-row button{border:1px solid var(--line);border-radius:999px;padding:11px 14px;background:var(--surface);color:var(--ink);font:inherit;font-size:12px;font-weight:700;cursor:pointer}
+.manage-row button.primary-manage{background:var(--blue);color:white;border-color:var(--blue)}
+.manage-row button.remove-manage{color:#c0392b}
+.manage-row button:disabled{opacity:.4;cursor:not-allowed}
+.chapter-row{grid-template-columns:minmax(180px,1fr) minmax(300px,390px);gap:18px}
+.status-switch{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;padding:4px;border:1px solid var(--line);border-radius:15px;background:var(--surface-soft)}
+.status-switch button{appearance:none;border:0;border-radius:10px;background:transparent;color:var(--muted);font:inherit;font-size:12px;font-weight:700;line-height:1.2;padding:11px 7px;min-height:40px;cursor:pointer;transition:background .18s ease,color .18s ease,box-shadow .18s ease}
+.status-switch button:hover{color:var(--ink)}
+.status-switch button[aria-pressed="true"]{background:#536dfe;color:#fff;box-shadow:0 3px 10px #536dfe30}
+.status-switch button[data-status="পড়ছি"][aria-pressed="true"]{background:#d99518;color:#fff;box-shadow:0 3px 10px #d9951830}
+.status-switch button[data-status="পড়া শেষ"][aria-pressed="true"]{background:#159a70;color:#fff;box-shadow:0 3px 10px #159a7030}
+[data-theme="dark"] .status-switch{background:var(--surface-soft);border-color:var(--line)}
+[data-theme="dark"] .status-switch button[aria-pressed="true"]{color:#fff}
+@media(max-width:800px){.manage-grid{grid-template-columns:1fr}.chapter-row{grid-template-columns:1fr;gap:10px;padding:17px 0}.status-switch{width:100%;max-width:430px}.status-switch button{font-size:12px;padding:10px 5px}}
+@media(max-width:480px){.status-switch{max-width:none}.status-switch button{font-size:11px;padding:9px 2px}}
+""",1)
+
+# Remove management inputs from subjects and chapters sections; put manager section at the very bottom before quote/footer
+html=html.replace('<div class="manage-row"><input id="newSubjectName" maxlength="70" placeholder="Add a subject name..."><button class="primary-manage" type="button" onclick="addSubject()">+ Add subject</button></div><div class="subject-grid" id="subjectGrid"></div>',
+                  '<div class="subject-grid" id="subjectGrid"></div>')
+html=html.replace('<div class="manage-row"><input id="newChapterName" maxlength="100" placeholder="Add a chapter to selected subject..."><button class="primary-manage" type="button" onclick="addChapter()">+ Add chapter</button></div><div class="tools">',
+                  '<div class="tools">')
+manager = '''
+<section class="section wrap" id="manage">
+  <div class="section-head reveal"><div><div class="eyebrow">Manage your content</div><h2>Make it yours.</h2><p class="sub">সব যোগ, এডিট ও ডিলিট করার অপশন শুধু এই নিচের অংশে থাকবে।</p></div></div>
+  <div class="manage-panel reveal">
+    <div class="manage-grid">
+      <div class="manage-card">
+        <h3>Subjects</h3><p>সাবজেক্ট যোগ, নাম পরিবর্তন অথবা মুছে ফেলো।</p>
+        <div class="manage-row"><input id="newSubjectName" maxlength="70" placeholder="নতুন সাবজেক্টের নাম"><button class="primary-manage" type="button" onclick="addSubject()">＋ যোগ</button></div>
+        <div class="manage-row"><select id="manageSubjectSelect" aria-label="সাবজেক্ট বেছে নাও"></select></div>
+        <div class="manage-row"><input id="renameSubjectName" maxlength="70" placeholder="নতুন নাম লিখে এডিট করো"></div>
+        <div class="manage-row"><button type="button" onclick="renameSubject()">নাম পরিবর্তন</button><button class="remove-manage" type="button" onclick="deleteSelectedSubject()">সাবজেক্ট ডিলিট</button></div>
+      </div>
+      <div class="manage-card">
+        <h3>Chapters</h3><p>সাবজেক্ট বেছে নিয়ে চ্যাপ্টার যোগ, এডিট অথবা মুছে ফেলো।</p>
+        <div class="manage-row"><select id="manageChapterSubject" aria-label="চ্যাপ্টারের সাবজেক্ট"></select></div>
+        <div class="manage-row"><input id="newChapterName" maxlength="100" placeholder="নতুন চ্যাপ্টারের নাম"><button class="primary-manage" type="button" onclick="addChapter()">＋ যোগ</button></div>
+        <div class="manage-row"><select id="manageChapterSelect" aria-label="এডিট বা ডিলিটের চ্যাপ্টার"></select></div>
+        <div class="manage-row"><input id="renameChapterName" maxlength="100" placeholder="নতুন চ্যাপ্টারের নাম"></div>
+        <div class="manage-row"><button type="button" onclick="renameChapter()">নাম পরিবর্তন</button><button class="remove-manage" type="button" onclick="deleteSelectedChapter()">চ্যাপ্টার ডিলিট</button></div>
+      </div>
+    </div>
+  </div>
+</section>
+'''
+html=html.replace('<section class="quote wrap reveal">', manager+'\\n<section class="quote wrap reveal">',1)
+
+# Remove inline subject delete button, keeping subject cards clean
+old='''<button class="subject-delete" type="button" onclick="event.stopPropagation();deleteSubject('${s.replace(/'/g, "\\\\'")}')">Remove subject</button>'''
+html=html.replace(old,'')
+
+# replace renderSubjects to update manager selectors too
+old='''  const select=document.getElementById('subjectFilter');
+  const current=select.value;
+  select.innerHTML=Object.keys(chapters).map(s=>`<option>${escapeText(s)}</option>`).join('');
+  if(chapters[current]) select.value=current;
+  else if(Object.keys(chapters).length) select.value=Object.keys(chapters)[0];
+}'''
+new='''  const select=document.getElementById('subjectFilter');
+  const current=select.value;
+  select.innerHTML=Object.keys(chapters).map(s=>`<option>${escapeText(s)}</option>`).join('');
+  if(chapters[current]) select.value=current;
+  else if(Object.keys(chapters).length) select.value=Object.keys(chapters)[0];
+  const manageSubject=document.getElementById('manageSubjectSelect');
+  const manageChapterSubject=document.getElementById('manageChapterSubject');
+  const oldManageSubject=manageSubject.value, oldChapterSubject=manageChapterSubject.value;
+  const options=Object.keys(chapters).map(s=>`<option value="${escapeText(s)}">${escapeText(s)}</option>`).join('');
+  manageSubject.innerHTML=options || '<option value="">কোনো সাবজেক্ট নেই</option>';
+  manageChapterSubject.innerHTML=options || '<option value="">কোনো সাবজেক্ট নেই</option>';
+  if(chapters[oldManageSubject]) manageSubject.value=oldManageSubject;
+  if(chapters[oldChapterSubject]) manageChapterSubject.value=oldChapterSubject;
+  updateManagedChapterOptions();
+}'''
+if old not in html: print("renderSubjects pattern missing")
+html=html.replace(old,new,1)
+
+# replace add/delete chapter functions and add manager helpers
+old='''function addSubject(){
+  const input=document.getElementById('newSubjectName'), name=input.value.trim();
+  if(!name){input.focus();return}
+  if(Object.keys(chapters).some(s=>s.toLowerCase()===name.toLowerCase())){alert('This subject already exists.');return}
+  chapters[name]=[];
+  input.value=''; saveChapters(); renderSubjects(); render(); 
+}
+function deleteSubject(name){
+  if(!confirm(`Remove subject "${name}" and all its chapters?`)) return;
+  delete chapters[name];
+  Object.keys(states).forEach(k=>{if(k.startsWith(name+'|')) delete states[k]});
+  saveChapters(); saveStates(); renderSubjects(); render();
+}
+function addChapter(){
+  const input=document.getElementById('newChapterName'), name=input.value.trim();
+  const subject=document.getElementById('subjectFilter').value;
+  if(!name){input.focus();return}
+  if(!chapters[subject]){alert('Add a subject first.');return}
+  if(chapters[subject].some(c=>c.toLowerCase()===name.toLowerCase())){alert('This chapter already exists.');return}
+  chapters[subject].push(name); input.value=''; saveChapters(); render();
+}
+function deleteChapter(subject,name){
+  if(!confirm(`Remove chapter "${name}"?`)) return;
+  chapters[subject]=chapters[subject].filter(c=>c!==name);
+  delete states[subject+'|'+name]; saveChapters(); saveStates(); render();
+}'''
+new='''function addSubject(){
+  const input=document.getElementById('newSubjectName'), name=input.value.trim();
+  if(!name){input.focus();return}
+  if(Object.keys(chapters).some(s=>s.toLowerCase()===name.toLowerCase())){alert('এই সাবজেক্ট আগে থেকেই আছে।');return}
+  chapters[name]=[];
+  input.value=''; saveChapters(); renderSubjects(); render(); showManageMessage('সাবজেক্ট যোগ হয়েছে');
+}
+function deleteSubject(name){
+  if(!confirm(`“${name}” এবং এর সব চ্যাপ্টার ডিলিট করতে চাও?`)) return;
+  delete chapters[name];
+  Object.keys(states).forEach(k=>{if(k.startsWith(name+'|')) delete states[k]});
+  saveChapters(); saveStates(); renderSubjects(); render(); showManageMessage('সাবজেক্ট ডিলিট হয়েছে');
+}
+function deleteSelectedSubject(){
+  const name=document.getElementById('manageSubjectSelect').value;
+  if(name) deleteSubject(name);
+}
+function renameSubject(){
+  const oldName=document.getElementById('manageSubjectSelect').value;
+  const input=document.getElementById('renameSubjectName'), newName=input.value.trim();
+  if(!oldName || !newName){input.focus();return}
+  if(newName===oldName){showManageMessage('নাম একই আছে');return}
+  if(Object.keys(chapters).some(s=>s.toLowerCase()===newName.toLowerCase())){alert('এই নামে সাবজেক্ট আগে থেকেই আছে।');return}
+  const rebuilt={}; Object.keys(chapters).forEach(s=>{rebuilt[s===oldName?newName:s]=chapters[s]}); chapters=rebuilt;
+  Object.keys(states).forEach(k=>{if(k.startsWith(oldName+'|')){states[newName+k.slice(oldName.length)]=states[k];delete states[k]}});
+  saveChapters();saveStates();input.value='';renderSubjects();document.getElementById('subjectFilter').value=newName;document.getElementById('manageSubjectSelect').value=newName;document.getElementById('manageChapterSubject').value=newName;render();showManageMessage('সাবজেক্টের নাম বদলেছে');
+}
+function addChapter(){
+  const input=document.getElementById('newChapterName'), name=input.value.trim();
+  const subject=document.getElementById('manageChapterSubject').value;
+  if(!name){input.focus();return}
+  if(!subject || !chapters[subject]){alert('আগে একটি সাবজেক্ট যোগ করো।');return}
+  if(chapters[subject].some(c=>c.toLowerCase()===name.toLowerCase())){alert('এই চ্যাপ্টার আগে থেকেই আছে।');return}
+  chapters[subject].push(name); input.value=''; saveChapters(); renderSubjects();document.getElementById('subjectFilter').value=subject;render();showManageMessage('চ্যাপ্টার যোগ হয়েছে');
+}
+function updateManagedChapterOptions(){
+  const subject=document.getElementById('manageChapterSubject')?.value;
+  const select=document.getElementById('manageChapterSelect');
+  if(!select)return;
+  const old=select.value, arr=chapters[subject]||[];
+  select.innerHTML=arr.map(c=>`<option value="${escapeText(c)}">${escapeText(c)}</option>`).join('') || '<option value="">কোনো চ্যাপ্টার নেই</option>';
+  if(arr.includes(old))select.value=old;
+  const selected=select.value;
+  const rename=document.getElementById('renameChapterName');
+  if(rename && selected && !rename.dataset.edited) rename.value=selected;
+}
+function renameChapter(){
+  const subject=document.getElementById('manageChapterSubject').value;
+  const oldName=document.getElementById('manageChapterSelect').value;
+  const input=document.getElementById('renameChapterName'),newName=input.value.trim();
+  if(!subject||!oldName||!newName){input.focus();return}
+  if(newName===oldName){showManageMessage('নাম একই আছে');return}
+  if((chapters[subject]||[]).some(c=>c.toLowerCase()===newName.toLowerCase())){alert('এই নামে চ্যাপ্টার আগে থেকেই আছে।');return}
+  chapters[subject]=chapters[subject].map(c=>c===oldName?newName:c);
+  if(states[subject+'|'+oldName]!==undefined){states[subject+'|'+newName]=states[subject+'|'+oldName];delete states[subject+'|'+oldName]}
+  saveChapters();saveStates();renderSubjects();document.getElementById('subjectFilter').value=subject;render();updateManagedChapterOptions();showManageMessage('চ্যাপ্টারের নাম বদলেছে');
+}
+function deleteSelectedChapter(){
+  const subject=document.getElementById('manageChapterSubject').value;
+  const name=document.getElementById('manageChapterSelect').value;
+  if(subject&&name) deleteChapter(subject,name);
+}
+function deleteChapter(subject,name){
+  if(!confirm(`“${name}” চ্যাপ্টারটি ডিলিট করতে চাও?`)) return;
+  chapters[subject]=chapters[subject].filter(c=>c!==name);
+  delete states[subject+'|'+name]; saveChapters(); saveStates(); renderSubjects(); render();updateManagedChapterOptions();showManageMessage('চ্যাপ্টার ডিলিট হয়েছে');
+}
+function showManageMessage(message){const done=document.getElementById('doneText'); if(done)done.textContent=message;}
+document.addEventListener('change',e=>{
+  if(e.target.id==='manageChapterSubject')updateManagedChapterOptions();
+  if(e.target.id==='manageChapterSelect'){const input=document.getElementById('renameChapterName');if(input){input.value=e.target.value;delete input.dataset.edited;}}
+});
+document.getElementById('renameChapterName')?.addEventListener('input',e=>e.target.dataset.edited='1');'''
+if old not in html: print("function pattern missing")
+html=html.replace(old,new,1)
+
+# replace render chapter output with status switch buttons; no inline delete
+old='''else list.innerHTML=arr.map(c=>{const key=s+'|'+c,st=states[key]||'পড়া বাকি';return `<div class="chapter-row"><div>${escapeText(c)}<small>${escapeText(s)}</small></div><button type="button" class="chapter-delete" onclick="deleteChapter('${s.replace(/'/g, "\\\\'")}','${c.replace(/'/g, "\\\\'")}')">Remove</button><select aria-label="Status for ${c}" onchange="setStatus('${encodeURIComponent(key)}',this.value)"><option ${st==='পড়া বাকি'?'selected':''}>পড়া বাকি</option><option ${st==='পড়ছি'?'selected':''}>পড়ছি</option><option ${st==='পড়া শেষ'?'selected':''}>পড়া শেষ</option></select></div>`}).join('');updateProgress()}'''
+new='''else list.innerHTML=arr.map(c=>{const key=s+'|'+c,st=states[key]||'পড়া বাকি';const statuses=['পড়া বাকি','পড়ছি','পড়া শেষ'];return `<div class="chapter-row"><div>${escapeText(c)}<small>${escapeText(s)}</small></div><div class="status-switch" role="group" aria-label="${escapeText(c)} পড়ার অবস্থা">${statuses.map(status=>`<button type="button" data-status="${status}" aria-pressed="${st===status}" aria-label="${escapeText(c)}: ${status}" onclick="setStatus('${encodeURIComponent(key)}','${status}')">${status}</button>`).join('')}</div></div>`}).join('');updateProgress()}'''
+if old not in html: print("render pattern missing")
+html=html.replace(old,new,1)
+
+# add nav anchor to bottom manager
+html=html.replace('<a href="#chapters">Chapters</a></div>', '<a href="#chapters">Chapters</a><a href="#manage">Manage</a></div>',1)
+
+# update subjectFilter changes: sync manager chapter subject when selecting chapters normally is fine; management section selection remains independent.
+# Make chapter rename field follow selected chapter on initial and on selection.
+html=html.replace("renderSubjects();render();", "renderSubjects();render();updateManagedChapterOptions();", 1)
+
+out=Path("/mnt/data/tracker-managed-bottom.html")
+out.write_text(html,encoding="utf-8")
+print(out, out.stat().st_size)
+from pathlib import Path
+p=Path("/mnt/data/tracker-add-remove.html")
+html=p.read_text(encoding="utf-8")
+
+# CSS: append new styles before closing style, and remove prior inline control layout overrides
+html=html.replace("""
+/* Minimal subject/chapter management controls */
+.manage-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 18px}
+.manage-row input{border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:13px;padding:12px 14px;font:inherit;font-size:14px;min-width:0;flex:1}
+.manage-row button,.chapter-delete,.subject-delete{border:1px solid var(--line);border-radius:999px;padding:10px 14px;background:var(--surface);color:var(--ink);font:inherit;font-size:12px;font-weight:700;cursor:pointer}
+.manage-row button.primary-manage{background:var(--blue);color:white;border-color:var(--blue)}
+.chapter-delete,.subject-delete{color:#c0392b;background:var(--surface)}
+.subject{position:relative}
+.subject .subject-delete{margin-top:10px}
+.chapter-row{grid-template-columns:minmax(0,1fr) auto minmax(300px,390px)}
+.chapter-row .chapter-delete{white-space:nowrap}
+@media(max-width:800px){.chapter-row{grid-template-columns:1fr auto}.chapter-row .status-switch{grid-column:1/-1}.chapter-row .chapter-delete{justify-self:start}}
+@media(max-width:480px){.chapter-row{grid-template-columns:1fr auto}}
+""", """
+/* Bottom-only subject/chapter manager */
+.manage-panel{background:var(--surface);border:1px solid var(--line);border-radius:24px;padding:clamp(18px,4vw,30px)}
+.manage-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.manage-card{border:1px solid var(--line);border-radius:18px;padding:18px;background:var(--paper)}
+.manage-card h3{margin:0 0 7px;font-size:19px}
+.manage-card p{color:var(--muted);font-size:13px;margin:0 0 15px}
+.manage-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:10px 0}
+.manage-row input,.manage-row select{border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:13px;padding:12px 14px;font:inherit;font-size:14px;min-width:0;flex:1;width:100%}
+.manage-row button{border:1px solid var(--line);border-radius:999px;padding:11px 14px;background:var(--surface);color:var(--ink);font:inherit;font-size:12px;font-weight:700;cursor:pointer}
+.manage-row button.primary-manage{background:var(--blue);color:white;border-color:var(--blue)}
+.manage-row button.remove-manage{color:#c0392b}
+.manage-row button:disabled{opacity:.4;cursor:not-allowed}
+.chapter-row{grid-template-columns:minmax(180px,1fr) minmax(300px,390px);gap:18px}
+.status-switch{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;padding:4px;border:1px solid var(--line);border-radius:15px;background:var(--surface-soft)}
+.status-switch button{appearance:none;border:0;border-radius:10px;background:transparent;color:var(--muted);font:inherit;font-size:12px;font-weight:700;line-height:1.2;padding:11px 7px;min-height:40px;cursor:pointer;transition:background .18s ease,color .18s ease,box-shadow .18s ease}
+.status-switch button:hover{color:var(--ink)}
+.status-switch button[aria-pressed="true"]{background:#536dfe;color:#fff;box-shadow:0 3px 10px #536dfe30}
+.status-switch button[data-status="পড়ছি"][aria-pressed="true"]{background:#d99518;color:#fff;box-shadow:0 3px 10px #d9951830}
+.status-switch button[data-status="পড়া শেষ"][aria-pressed="true"]{background:#159a70;color:#fff;box-shadow:0 3px 10px #159a7030}
+[data-theme="dark"] .status-switch{background:var(--surface-soft);border-color:var(--line)}
+[data-theme="dark"] .status-switch button[aria-pressed="true"]{color:#fff}
+@media(max-width:800px){.manage-grid{grid-template-columns:1fr}.chapter-row{grid-template-columns:1fr;gap:10px;padding:17px 0}.status-switch{width:100%;max-width:430px}.status-switch button{font-size:12px;padding:10px 5px}}
+@media(max-width:480px){.status-switch{max-width:none}.status-switch button{font-size:11px;padding:9px 2px}}
+""",1)
+
+# Remove management inputs from subjects and chapters sections; put manager section at the very bottom before quote/footer
+html=html.replace('<div class="manage-row"><input id="newSubjectName" maxlength="70" placeholder="Add a subject name..."><button class="primary-manage" type="button" onclick="addSubject()">+ Add subject</button></div><div class="subject-grid" id="subjectGrid"></div>',
+                  '<div class="subject-grid" id="subjectGrid"></div>')
+html=html.replace('<div class="manage-row"><input id="newChapterName" maxlength="100" placeholder="Add a chapter to selected subject..."><button class="primary-manage" type="button" onclick="addChapter()">+ Add chapter</button></div><div class="tools">',
+                  '<div class="tools">')
+manager = '''
+<section class="section wrap" id="manage">
+  <div class="section-head reveal"><div><div class="eyebrow">Manage your content</div><h2>Make it yours.</h2><p class="sub">সব যোগ, এডিট ও ডিলিট করার অপশন শুধু এই নিচের অংশে থাকবে।</p></div></div>
+  <div class="manage-panel reveal">
+    <div class="manage-grid">
+      <div class="manage-card">
+        <h3>Subjects</h3><p>সাবজেক্ট যোগ, নাম পরিবর্তন অথবা মুছে ফেলো।</p>
+        <div class="manage-row"><input id="newSubjectName" maxlength="70" placeholder="নতুন সাবজেক্টের নাম"><button class="primary-manage" type="button" onclick="addSubject()">＋ যোগ</button></div>
+        <div class="manage-row"><select id="manageSubjectSelect" aria-label="সাবজেক্ট বেছে নাও"></select></div>
+        <div class="manage-row"><input id="renameSubjectName" maxlength="70" placeholder="নতুন নাম লিখে এডিট করো"></div>
+        <div class="manage-row"><button type="button" onclick="renameSubject()">নাম পরিবর্তন</button><button class="remove-manage" type="button" onclick="deleteSelectedSubject()">সাবজেক্ট ডিলিট</button></div>
+      </div>
+      <div class="manage-card">
+        <h3>Chapters</h3><p>সাবজেক্ট বেছে নিয়ে চ্যাপ্টার যোগ, এডিট অথবা মুছে ফেলো।</p>
+        <div class="manage-row"><select id="manageChapterSubject" aria-label="চ্যাপ্টারের সাবজেক্ট"></select></div>
+        <div class="manage-row"><input id="newChapterName" maxlength="100" placeholder="নতুন চ্যাপ্টারের নাম"><button class="primary-manage" type="button" onclick="addChapter()">＋ যোগ</button></div>
+        <div class="manage-row"><select id="manageChapterSelect" aria-label="এডিট বা ডিলিটের চ্যাপ্টার"></select></div>
+        <div class="manage-row"><input id="renameChapterName" maxlength="100" placeholder="নতুন চ্যাপ্টারের নাম"></div>
+        <div class="manage-row"><button type="button" onclick="renameChapter()">নাম পরিবর্তন</button><button class="remove-manage" type="button" onclick="deleteSelectedChapter()">চ্যাপ্টার ডিলিট</button></div>
+      </div>
+    </div>
+  </div>
+</section>
+'''
+html=html.replace('<section class="quote wrap reveal">', manager+'\\n<section class="quote wrap reveal">',1)
+
+# Remove inline subject delete button, keeping subject cards clean
+old='''<button class="subject-delete" type="button" onclick="event.stopPropagation();deleteSubject('${s.replace(/'/g, "\\\\'")}')">Remove subject</button>'''
+html=html.replace(old,'')
+
+# replace renderSubjects to update manager selectors too
+old='''  const select=document.getElementById('subjectFilter');
+  const current=select.value;
+  select.innerHTML=Object.keys(chapters).map(s=>`<option>${escapeText(s)}</option>`).join('');
+  if(chapters[current]) select.value=current;
+  else if(Object.keys(chapters).length) select.value=Object.keys(chapters)[0];
+}'''
+new='''  const select=document.getElementById('subjectFilter');
+  const current=select.value;
+  select.innerHTML=Object.keys(chapters).map(s=>`<option>${escapeText(s)}</option>`).join('');
+  if(chapters[current]) select.value=current;
+  else if(Object.keys(chapters).length) select.value=Object.keys(chapters)[0];
+  const manageSubject=document.getElementById('manageSubjectSelect');
+  const manageChapterSubject=document.getElementById('manageChapterSubject');
+  const oldManageSubject=manageSubject.value, oldChapterSubject=manageChapterSubject.value;
+  const options=Object.keys(chapters).map(s=>`<option value="${escapeText(s)}">${escapeText(s)}</option>`).join('');
+  manageSubject.innerHTML=options || '<option value="">কোনো সাবজেক্ট নেই</option>';
+  manageChapterSubject.innerHTML=options || '<option value="">কোনো সাবজেক্ট নেই</option>';
+  if(chapters[oldManageSubject]) manageSubject.value=oldManageSubject;
+  if(chapters[oldChapterSubject]) manageChapterSubject.value=oldChapterSubject;
+  updateManagedChapterOptions();
+}'''
+if old not in html: print("renderSubjects pattern missing")
+html=html.replace(old,new,1)
+
+# replace add/delete chapter functions and add manager helpers
+old='''function addSubject(){
+  const input=document.getElementById('newSubjectName'), name=input.value.trim();
+  if(!name){input.focus();return}
+  if(Object.keys(chapters).some(s=>s.toLowerCase()===name.toLowerCase())){alert('This subject already exists.');return}
+  chapters[name]=[];
+  input.value=''; saveChapters(); renderSubjects(); render(); 
+}
+function deleteSubject(name){
+  if(!confirm(`Remove subject "${name}" and all its chapters?`)) return;
+  delete chapters[name];
+  Object.keys(states).forEach(k=>{if(k.startsWith(name+'|')) delete states[k]});
+  saveChapters(); saveStates(); renderSubjects(); render();
+}
+function addChapter(){
+  const input=document.getElementById('newChapterName'), name=input.value.trim();
+  const subject=document.getElementById('subjectFilter').value;
+  if(!name){input.focus();return}
+  if(!chapters[subject]){alert('Add a subject first.');return}
+  if(chapters[subject].some(c=>c.toLowerCase()===name.toLowerCase())){alert('This chapter already exists.');return}
+  chapters[subject].push(name); input.value=''; saveChapters(); render();
+}
+function deleteChapter(subject,name){
+  if(!confirm(`Remove chapter "${name}"?`)) return;
+  chapters[subject]=chapters[subject].filter(c=>c!==name);
+  delete states[subject+'|'+name]; saveChapters(); saveStates(); render();
+}'''
+new='''function addSubject(){
+  const input=document.getElementById('newSubjectName'), name=input.value.trim();
+  if(!name){input.focus();return}
+  if(Object.keys(chapters).some(s=>s.toLowerCase()===name.toLowerCase())){alert('এই সাবজেক্ট আগে থেকেই আছে।');return}
+  chapters[name]=[];
+  input.value=''; saveChapters(); renderSubjects(); render(); showManageMessage('সাবজেক্ট যোগ হয়েছে');
+}
+function deleteSubject(name){
+  if(!confirm(`“${name}” এবং এর সব চ্যাপ্টার ডিলিট করতে চাও?`)) return;
+  delete chapters[name];
+  Object.keys(states).forEach(k=>{if(k.startsWith(name+'|')) delete states[k]});
+  saveChapters(); saveStates(); renderSubjects(); render(); showManageMessage('সাবজেক্ট ডিলিট হয়েছে');
+}
+function deleteSelectedSubject(){
+  const name=document.getElementById('manageSubjectSelect').value;
+  if(name) deleteSubject(name);
+}
+function renameSubject(){
+  const oldName=document.getElementById('manageSubjectSelect').value;
+  const input=document.getElementById('renameSubjectName'), newName=input.value.trim();
+  if(!oldName || !newName){input.focus();return}
+  if(newName===oldName){showManageMessage('নাম একই আছে');return}
+  if(Object.keys(chapters).some(s=>s.toLowerCase()===newName.toLowerCase())){alert('এই নামে সাবজেক্ট আগে থেকেই আছে।');return}
+  const rebuilt={}; Object.keys(chapters).forEach(s=>{rebuilt[s===oldName?newName:s]=chapters[s]}); chapters=rebuilt;
+  Object.keys(states).forEach(k=>{if(k.startsWith(oldName+'|')){states[newName+k.slice(oldName.length)]=states[k];delete states[k]}});
+  saveChapters();saveStates();input.value='';renderSubjects();document.getElementById('subjectFilter').value=newName;document.getElementById('manageSubjectSelect').value=newName;document.getElementById('manageChapterSubject').value=newName;render();showManageMessage('সাবজেক্টের নাম বদলেছে');
+}
+function addChapter(){
+  const input=document.getElementById('newChapterName'), name=input.value.trim();
+  const subject=document.getElementById('manageChapterSubject').value;
+  if(!name){input.focus();return}
+  if(!subject || !chapters[subject]){alert('আগে একটি সাবজেক্ট যোগ করো।');return}
+  if(chapters[subject].some(c=>c.toLowerCase()===name.toLowerCase())){alert('এই চ্যাপ্টার আগে থেকেই আছে।');return}
+  chapters[subject].push(name); input.value=''; saveChapters(); renderSubjects();document.getElementById('subjectFilter').value=subject;render();showManageMessage('চ্যাপ্টার যোগ হয়েছে');
+}
+function updateManagedChapterOptions(){
+  const subject=document.getElementById('manageChapterSubject')?.value;
+  const select=document.getElementById('manageChapterSelect');
+  if(!select)return;
+  const old=select.value, arr=chapters[subject]||[];
+  select.innerHTML=arr.map(c=>`<option value="${escapeText(c)}">${escapeText(c)}</option>`).join('') || '<option value="">কোনো চ্যাপ্টার নেই</option>';
+  if(arr.includes(old))select.value=old;
+  const selected=select.value;
+  const rename=document.getElementById('renameChapterName');
+  if(rename && selected && !rename.dataset.edited) rename.value=selected;
+}
+function renameChapter(){
+  const subject=document.getElementById('manageChapterSubject').value;
+  const oldName=document.getElementById('manageChapterSelect').value;
+  const input=document.getElementById('renameChapterName'),newName=input.value.trim();
+  if(!subject||!oldName||!newName){input.focus();return}
+  if(newName===oldName){showManageMessage('নাম একই আছে');return}
+  if((chapters[subject]||[]).some(c=>c.toLowerCase()===newName.toLowerCase())){alert('এই নামে চ্যাপ্টার আগে থেকেই আছে।');return}
+  chapters[subject]=chapters[subject].map(c=>c===oldName?newName:c);
+  if(states[subject+'|'+oldName]!==undefined){states[subject+'|'+newName]=states[subject+'|'+oldName];delete states[subject+'|'+oldName]}
+  saveChapters();saveStates();renderSubjects();document.getElementById('subjectFilter').value=subject;render();updateManagedChapterOptions();showManageMessage('চ্যাপ্টারের নাম বদলেছে');
+}
+function deleteSelectedChapter(){
+  const subject=document.getElementById('manageChapterSubject').value;
+  const name=document.getElementById('manageChapterSelect').value;
+  if(subject&&name) deleteChapter(subject,name);
+}
+function deleteChapter(subject,name){
+  if(!confirm(`“${name}” চ্যাপ্টারটি ডিলিট করতে চাও?`)) return;
+  chapters[subject]=chapters[subject].filter(c=>c!==name);
+  delete states[subject+'|'+name]; saveChapters(); saveStates(); renderSubjects(); render();updateManagedChapterOptions();showManageMessage('চ্যাপ্টার ডিলিট হয়েছে');
+}
+function showManageMessage(message){const done=document.getElementById('doneText'); if(done)done.textContent=message;}
+document.addEventListener('change',e=>{
+  if(e.target.id==='manageChapterSubject')updateManagedChapterOptions();
+  if(e.target.id==='manageChapterSelect'){const input=document.getElementById('renameChapterName');if(input){input.value=e.target.value;delete input.dataset.edited;}}
+});
+document.getElementById('renameChapterName')?.addEventListener('input',e=>e.target.dataset.edited='1');'''
+if old not in html: print("function pattern missing")
+html=html.replace(old,new,1)
+
+# replace render chapter output with status switch buttons; no inline delete
+old='''else list.innerHTML=arr.map(c=>{const key=s+'|'+c,st=states[key]||'পড়া বাকি';return `<div class="chapter-row"><div>${escapeText(c)}<small>${escapeText(s)}</small></div><button type="button" class="chapter-delete" onclick="deleteChapter('${s.replace(/'/g, "\\\\'")}','${c.replace(/'/g, "\\\\'")}')">Remove</button><select aria-label="Status for ${c}" onchange="setStatus('${encodeURIComponent(key)}',this.value)"><option ${st==='পড়া বাকি'?'selected':''}>পড়া বাকি</option><option ${st==='পড়ছি'?'selected':''}>পড়ছি</option><option ${st==='পড়া শেষ'?'selected':''}>পড়া শেষ</option></select></div>`}).join('');updateProgress()}'''
+new='''else list.innerHTML=arr.map(c=>{const key=s+'|'+c,st=states[key]||'পড়া বাকি';const statuses=['পড়া বাকি','পড়ছি','পড়া শেষ'];return `<div class="chapter-row"><div>${escapeText(c)}<small>${escapeText(s)}</small></div><div class="status-switch" role="group" aria-label="${escapeText(c)} পড়ার অবস্থা">${statuses.map(status=>`<button type="button" data-status="${status}" aria-pressed="${st===status}" aria-label="${escapeText(c)}: ${status}" onclick="setStatus('${encodeURIComponent(key)}','${status}')">${status}</button>`).join('')}</div></div>`}).join('');updateProgress()}'''
+if old not in html: print("render pattern missing")
+html=html.replace(old,new,1)
+
+# add nav anchor to bottom manager
+html=html.replace('<a href="#chapters">Chapters</a></div>', '<a href="#chapters">Chapters</a><a href="#manage">Manage</a></div>',1)
+
+# update subjectFilter changes: sync manager chapter subject when selecting chapters normally is fine; management section selection remains independent.
+# Make chapter rename field follow selected chapter on initial and on selection.
+html=html.replace("renderSubjects();render();", "renderSubjects();render();updateManagedChapterOptions();", 1)
+
+out=Path("/mnt/data/tracker-managed-bottom.html")
+out.write_text(html,encoding="utf-8")
+print(out, out.stat().st_size)
+from pathlib import Path
+p=Path("/mnt/data/tracker-add-remove.html")
+html=p.read_text(encoding="utf-8")
+
+# CSS: append new styles before closing style, and remove prior inline control layout overrides
+html=html.replace("""
+/* Minimal subject/chapter management controls */
+.manage-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 18px}
+.manage-row input{border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:13px;padding:12px 14px;font:inherit;font-size:14px;min-width:0;flex:1}
+.manage-row button,.chapter-delete,.subject-delete{border:1px solid var(--line);border-radius:999px;padding:10px 14px;background:var(--surface);color:var(--ink);font:inherit;font-size:12px;font-weight:700;cursor:pointer}
+.manage-row button.primary-manage{background:var(--blue);color:white;border-color:var(--blue)}
+.chapter-delete,.subject-delete{color:#c0392b;background:var(--surface)}
+.subject{position:relative}
+.subject .subject-delete{margin-top:10px}
+.chapter-row{grid-template-columns:minmax(0,1fr) auto minmax(300px,390px)}
+.chapter-row .chapter-delete{white-space:nowrap}
+@media(max-width:800px){.chapter-row{grid-template-columns:1fr auto}.chapter-row .status-switch{grid-column:1/-1}.chapter-row .chapter-delete{justify-self:start}}
+@media(max-width:480px){.chapter-row{grid-template-columns:1fr auto}}
+""", """
+/* Bottom-only subject/chapter manager */
+.manage-panel{background:var(--surface);border:1px solid var(--line);border-radius:24px;padding:clamp(18px,4vw,30px)}
+.manage-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.manage-card{border:1px solid var(--line);border-radius:18px;padding:18px;background:var(--paper)}
+.manage-card h3{margin:0 0 7px;font-size:19px}
+.manage-card p{color:var(--muted);font-size:13px;margin:0 0 15px}
+.manage-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:10px 0}
+.manage-row input,.manage-row select{border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:13px;padding:12px 14px;font:inherit;font-size:14px;min-width:0;flex:1;width:100%}
+.manage-row button{border:1px solid var(--line);border-radius:999px;padding:11px 14px;background:var(--surface);color:var(--ink);font:inherit;font-size:12px;font-weight:700;cursor:pointer}
+.manage-row button.primary-manage{background:var(--blue);color:white;border-color:var(--blue)}
+.manage-row button.remove-manage{color:#c0392b}
+.manage-row button:disabled{opacity:.4;cursor:not-allowed}
+.chapter-row{grid-template-columns:minmax(180px,1fr) minmax(300px,390px);gap:18px}
+.status-switch{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;padding:4px;border:1px solid var(--line);border-radius:15px;background:var(--surface-soft)}
+.status-switch button{appearance:none;border:0;border-radius:10px;background:transparent;color:var(--muted);font:inherit;font-size:12px;font-weight:700;line-height:1.2;padding:11px 7px;min-height:40px;cursor:pointer;transition:background .18s ease,color .18s ease,box-shadow .18s ease}
+.status-switch button:hover{color:var(--ink)}
+.status-switch button[aria-pressed="true"]{background:#536dfe;color:#fff;box-shadow:0 3px 10px #536dfe30}
+.status-switch button[data-status="পড়ছি"][aria-pressed="true"]{background:#d99518;color:#fff;box-shadow:0 3px 10px #d9951830}
+.status-switch button[data-status="পড়া শেষ"][aria-pressed="true"]{background:#159a70;color:#fff;box-shadow:0 3px 10px #159a7030}
+[data-theme="dark"] .status-switch{background:var(--surface-soft);border-color:var(--line)}
+[data-theme="dark"] .status-switch button[aria-pressed="true"]{color:#fff}
+@media(max-width:800px){.manage-grid{grid-template-columns:1fr}.chapter-row{grid-template-columns:1fr;gap:10px;padding:17px 0}.status-switch{width:100%;max-width:430px}.status-switch button{font-size:12px;padding:10px 5px}}
+@media(max-width:480px){.status-switch{max-width:none}.status-switch button{font-size:11px;padding:9px 2px}}
+""",1)
+
+# Remove management inputs from subjects and chapters sections; put manager section at the very bottom before quote/footer
+html=html.replace('<div class="manage-row"><input id="newSubjectName" maxlength="70" placeholder="Add a subject name..."><button class="primary-manage" type="button" onclick="addSubject()">+ Add subject</button></div><div class="subject-grid" id="subjectGrid"></div>',
+                  '<div class="subject-grid" id="subjectGrid"></div>')
+html=html.replace('<div class="manage-row"><input id="newChapterName" maxlength="100" placeholder="Add a chapter to selected subject..."><button class="primary-manage" type="button" onclick="addChapter()">+ Add chapter</button></div><div class="tools">',
+                  '<div class="tools">')
+manager = '''
+<section class="section wrap" id="manage">
+  <div class="section-head reveal"><div><div class="eyebrow">Manage your content</div><h2>Make it yours.</h2><p class="sub">সব যোগ, এডিট ও ডিলিট করার অপশন শুধু এই নিচের অংশে থাকবে।</p></div></div>
+  <div class="manage-panel reveal">
+    <div class="manage-grid">
+      <div class="manage-card">
+        <h3>Subjects</h3><p>সাবজেক্ট যোগ, নাম পরিবর্তন অথবা মুছে ফেলো।</p>
+        <div class="manage-row"><input id="newSubjectName" maxlength="70" placeholder="নতুন সাবজেক্টের নাম"><button class="primary-manage" type="button" onclick="addSubject()">＋ যোগ</button></div>
+        <div class="manage-row"><select id="manageSubjectSelect" aria-label="সাবজেক্ট বেছে নাও"></select></div>
+        <div class="manage-row"><input id="renameSubjectName" maxlength="70" placeholder="নতুন নাম লিখে এডিট করো"></div>
+        <div class="manage-row"><button type="button" onclick="renameSubject()">নাম পরিবর্তন</button><button class="remove-manage" type="button" onclick="deleteSelectedSubject()">সাবজেক্ট ডিলিট</button></div>
+      </div>
+      <div class="manage-card">
+        <h3>Chapters</h3><p>সাবজেক্ট বেছে নিয়ে চ্যাপ্টার যোগ, এডিট অথবা মুছে ফেলো।</p>
+        <div class="manage-row"><select id="manageChapterSubject" aria-label="চ্যাপ্টারের সাবজেক্ট"></select></div>
+        <div class="manage-row"><input id="newChapterName" maxlength="100" placeholder="নতুন চ্যাপ্টারের নাম"><button class="primary-manage" type="button" onclick="addChapter()">＋ যোগ</button></div>
+        <div class="manage-row"><select id="manageChapterSelect" aria-label="এডিট বা ডিলিটের চ্যাপ্টার"></select></div>
+        <div class="manage-row"><input id="renameChapterName" maxlength="100" placeholder="নতুন চ্যাপ্টারের নাম"></div>
+        <div class="manage-row"><button type="button" onclick="renameChapter()">নাম পরিবর্তন</button><button class="remove-manage" type="button" onclick="deleteSelectedChapter()">চ্যাপ্টার ডিলিট</button></div>
+      </div>
+    </div>
+  </div>
+</section>
+'''
+html=html.replace('<section class="quote wrap reveal">', manager+'\\n<section class="quote wrap reveal">',1)
+
+# Remove inline subject delete button, keeping subject cards clean
+old='''<button class="subject-delete" type="button" onclick="event.stopPropagation();deleteSubject('${s.replace(/'/g, "\\\\'")}')">Remove subject</button>'''
+html=html.replace(old,'')
+
+# replace renderSubjects to update manager selectors too
+old='''  const select=document.getElementById('subjectFilter');
+  const current=select.value;
+  select.innerHTML=Object.keys(chapters).map(s=>`<option>${escapeText(s)}</option>`).join('');
+  if(chapters[current]) select.value=current;
+  else if(Object.keys(chapters).length) select.value=Object.keys(chapters)[0];
+}'''
+new='''  const select=document.getElementById('subjectFilter');
+  const current=select.value;
+  select.innerHTML=Object.keys(chapters).map(s=>`<option>${escapeText(s)}</option>`).join('');
+  if(chapters[current]) select.value=current;
+  else if(Object.keys(chapters).length) select.value=Object.keys(chapters)[0];
+  const manageSubject=document.getElementById('manageSubjectSelect');
+  const manageChapterSubject=document.getElementById('manageChapterSubject');
+  const oldManageSubject=manageSubject.value, oldChapterSubject=manageChapterSubject.value;
+  const options=Object.keys(chapters).map(s=>`<option value="${escapeText(s)}">${escapeText(s)}</option>`).join('');
+  manageSubject.innerHTML=options || '<option value="">কোনো সাবজেক্ট নেই</option>';
+  manageChapterSubject.innerHTML=options || '<option value="">কোনো সাবজেক্ট নেই</option>';
+  if(chapters[oldManageSubject]) manageSubject.value=oldManageSubject;
+  if(chapters[oldChapterSubject]) manageChapterSubject.value=oldChapterSubject;
+  updateManagedChapterOptions();
+}'''
+if old not in html: print("renderSubjects pattern missing")
+html=html.replace(old,new,1)
+
+# replace add/delete chapter functions and add manager helpers
+old='''function addSubject(){
+  const input=document.getElementById('newSubjectName'), name=input.value.trim();
+  if(!name){input.focus();return}
+  if(Object.keys(chapters).some(s=>s.toLowerCase()===name.toLowerCase())){alert('This subject already exists.');return}
+  chapters[name]=[];
+  input.value=''; saveChapters(); renderSubjects(); render(); 
+}
+function deleteSubject(name){
+  if(!confirm(`Remove subject "${name}" and all its chapters?`)) return;
+  delete chapters[name];
+  Object.keys(states).forEach(k=>{if(k.startsWith(name+'|')) delete states[k]});
+  saveChapters(); saveStates(); renderSubjects(); render();
+}
+function addChapter(){
+  const input=document.getElementById('newChapterName'), name=input.value.trim();
+  const subject=document.getElementById('subjectFilter').value;
+  if(!name){input.focus();return}
+  if(!chapters[subject]){alert('Add a subject first.');return}
+  if(chapters[subject].some(c=>c.toLowerCase()===name.toLowerCase())){alert('This chapter already exists.');return}
+  chapters[subject].push(name); input.value=''; saveChapters(); render();
+}
+function deleteChapter(subject,name){
+  if(!confirm(`Remove chapter "${name}"?`)) return;
+  chapters[subject]=chapters[subject].filter(c=>c!==name);
+  delete states[subject+'|'+name]; saveChapters(); saveStates(); render();
+}'''
+new='''function addSubject(){
+  const input=document.getElementById('newSubjectName'), name=input.value.trim();
+  if(!name){input.focus();return}
+  if(Object.keys(chapters).some(s=>s.toLowerCase()===name.toLowerCase())){alert('এই সাবজেক্ট আগে থেকেই আছে।');return}
+  chapters[name]=[];
+  input.value=''; saveChapters(); renderSubjects(); render(); showManageMessage('সাবজেক্ট যোগ হয়েছে');
+}
+function deleteSubject(name){
+  if(!confirm(`“${name}” এবং এর সব চ্যাপ্টার ডিলিট করতে চাও?`)) return;
+  delete chapters[name];
+  Object.keys(states).forEach(k=>{if(k.startsWith(name+'|')) delete states[k]});
+  saveChapters(); saveStates(); renderSubjects(); render(); showManageMessage('সাবজেক্ট ডিলিট হয়েছে');
+}
+function deleteSelectedSubject(){
+  const name=document.getElementById('manageSubjectSelect').value;
+  if(name) deleteSubject(name);
+}
+function renameSubject(){
+  const oldName=document.getElementById('manageSubjectSelect').value;
+  const input=document.getElementById('renameSubjectName'), newName=input.value.trim();
+  if(!oldName || !newName){input.focus();return}
+  if(newName===oldName){showManageMessage('নাম একই আছে');return}
+  if(Object.keys(chapters).some(s=>s.toLowerCase()===newName.toLowerCase())){alert('এই নামে সাবজেক্ট আগে থেকেই আছে।');return}
+  const rebuilt={}; Object.keys(chapters).forEach(s=>{rebuilt[s===oldName?newName:s]=chapters[s]}); chapters=rebuilt;
+  Object.keys(states).forEach(k=>{if(k.startsWith(oldName+'|')){states[newName+k.slice(oldName.length)]=states[k];delete states[k]}});
+  saveChapters();saveStates();input.value='';renderSubjects();document.getElementById('subjectFilter').value=newName;document.getElementById('manageSubjectSelect').value=newName;document.getElementById('manageChapterSubject').value=newName;render();showManageMessage('সাবজেক্টের নাম বদলেছে');
+}
+function addChapter(){
+  const input=document.getElementById('newChapterName'), name=input.value.trim();
+  const subject=document.getElementById('manageChapterSubject').value;
+  if(!name){input.focus();return}
+  if(!subject || !chapters[subject]){alert('আগে একটি সাবজেক্ট যোগ করো।');return}
+  if(chapters[subject].some(c=>c.toLowerCase()===name.toLowerCase())){alert('এই চ্যাপ্টার আগে থেকেই আছে।');return}
+  chapters[subject].push(name); input.value=''; saveChapters(); renderSubjects();document.getElementById('subjectFilter').value=subject;render();showManageMessage('চ্যাপ্টার যোগ হয়েছে');
+}
+function updateManagedChapterOptions(){
+  const subject=document.getElementById('manageChapterSubject')?.value;
+  const select=document.getElementById('manageChapterSelect');
+  if(!select)return;
+  const old=select.value, arr=chapters[subject]||[];
+  select.innerHTML=arr.map(c=>`<option value="${escapeText(c)}">${escapeText(c)}</option>`).join('') || '<option value="">কোনো চ্যাপ্টার নেই</option>';
+  if(arr.includes(old))select.value=old;
+  const selected=select.value;
+  const rename=document.getElementById('renameChapterName');
+  if(rename && selected && !rename.dataset.edited) rename.value=selected;
+}
+function renameChapter(){
+  const subject=document.getElementById('manageChapterSubject').value;
+  const oldName=document.getElementById('manageChapterSelect').value;
+  const input=document.getElementById('renameChapterName'),newName=input.value.trim();
+  if(!subject||!oldName||!newName){input.focus();return}
+  if(newName===oldName){showManageMessage('নাম একই আছে');return}
+  if((chapters[subject]||[]).some(c=>c.toLowerCase()===newName.toLowerCase())){alert('এই নামে চ্যাপ্টার আগে থেকেই আছে।');return}
+  chapters[subject]=chapters[subject].map(c=>c===oldName?newName:c);
+  if(states[subject+'|'+oldName]!==undefined){states[subject+'|'+newName]=states[subject+'|'+oldName];delete states[subject+'|'+oldName]}
+  saveChapters();saveStates();renderSubjects();document.getElementById('subjectFilter').value=subject;render();updateManagedChapterOptions();showManageMessage('চ্যাপ্টারের নাম বদলেছে');
+}
+function deleteSelectedChapter(){
+  const subject=document.getElementById('manageChapterSubject').value;
+  const name=document.getElementById('manageChapterSelect').value;
+  if(subject&&name) deleteChapter(subject,name);
+}
+function deleteChapter(subject,name){
+  if(!confirm(`“${name}” চ্যাপ্টারটি ডিলিট করতে চাও?`)) return;
+  chapters[subject]=chapters[subject].filter(c=>c!==name);
+  delete states[subject+'|'+name]; saveChapters(); saveStates(); renderSubjects(); render();updateManagedChapterOptions();showManageMessage('চ্যাপ্টার ডিলিট হয়েছে');
+}
+function showManageMessage(message){const done=document.getElementById('doneText'); if(done)done.textContent=message;}
+document.addEventListener('change',e=>{
+  if(e.target.id==='manageChapterSubject')updateManagedChapterOptions();
+  if(e.target.id==='manageChapterSelect'){const input=document.getElementById('renameChapterName');if(input){input.value=e.target.value;delete input.dataset.edited;}}
+});
+document.getElementById('renameChapterName')?.addEventListener('input',e=>e.target.dataset.edited='1');'''
+if old not in html: print("function pattern missing")
+html=html.replace(old,new,1)
+
+# replace render chapter output with status switch buttons; no inline delete
+old='''else list.innerHTML=arr.map(c=>{const key=s+'|'+c,st=states[key]||'পড়া বাকি';return `<div class="chapter-row"><div>${escapeText(c)}<small>${escapeText(s)}</small></div><button type="button" class="chapter-delete" onclick="deleteChapter('${s.replace(/'/g, "\\\\'")}','${c.replace(/'/g, "\\\\'")}')">Remove</button><select aria-label="Status for ${c}" onchange="setStatus('${encodeURIComponent(key)}',this.value)"><option ${st==='পড়া বাকি'?'selected':''}>পড়া বাকি</option><option ${st==='পড়ছি'?'selected':''}>পড়ছি</option><option ${st==='পড়া শেষ'?'selected':''}>পড়া শেষ</option></select></div>`}).join('');updateProgress()}'''
+new='''else list.innerHTML=arr.map(c=>{const key=s+'|'+c,st=states[key]||'পড়া বাকি';const statuses=['পড়া বাকি','পড়ছি','পড়া শেষ'];return `<div class="chapter-row"><div>${escapeText(c)}<small>${escapeText(s)}</small></div><div class="status-switch" role="group" aria-label="${escapeText(c)} পড়ার অবস্থা">${statuses.map(status=>`<button type="button" data-status="${status}" aria-pressed="${st===status}" aria-label="${escapeText(c)}: ${status}" onclick="setStatus('${encodeURIComponent(key)}','${status}')">${status}</button>`).join('')}</div></div>`}).join('');updateProgress()}'''
+if old not in html: print("render pattern missing")
+html=html.replace(old,new,1)
+
+# add nav anchor to bottom manager
+html=html.replace('<a href="#chapters">Chapters</a></div>', '<a href="#chapters">Chapters</a><a href="#manage">Manage</a></div>',1)
+
+# update subjectFilter changes: sync manager chapter subject when selecting chapters normally is fine; management section selection remains independent.
+# Make chapter rename field follow selected chapter on initial and on selection.
+html=html.replace("renderSubjects();render();", "renderSubjects();render();updateManagedChapterOptions();", 1)
+
+out=Path("/mnt/data/tracker-managed-bottom.html")
+out.write_text(html,encoding="utf-8")
+print(out, out.stat().st_size)
+from pathlib import Path
+p=Path("/mnt/data/tracker-add-remove.html")
+html=p.read_text(encoding="utf-8")
+
+# CSS: append new styles before closing style, and remove prior inline control layout overrides
+html=html.replace("""
+/* Minimal subject/chapter management controls */
+.manage-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 18px}
+.manage-row input{border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:13px;padding:12px 14px;font:inherit;font-size:14px;min-width:0;flex:1}
+.manage-row button,.chapter-delete,.subject-delete{border:1px solid var(--line);border-radius:999px;padding:10px 14px;background:var(--surface);color:var(--ink);font:inherit;font-size:12px;font-weight:700;cursor:pointer}
+.manage-row button.primary-manage{background:var(--blue);color:white;border-color:var(--blue)}
+.chapter-delete,.subject-delete{color:#c0392b;background:var(--surface)}
+.subject{position:relative}
+.subject .subject-delete{margin-top:10px}
+.chapter-row{grid-template-columns:minmax(0,1fr) auto minmax(300px,390px)}
+.chapter-row .chapter-delete{white-space:nowrap}
+@media(max-width:800px){.chapter-row{grid-template-columns:1fr auto}.chapter-row .status-switch{grid-column:1/-1}.chapter-row .chapter-delete{justify-self:start}}
+@media(max-width:480px){.chapter-row{grid-template-columns:1fr auto}}
+""", """
+/* Bottom-only subject/chapter manager */
+.manage-panel{background:var(--surface);border:1px solid var(--line);border-radius:24px;padding:clamp(18px,4vw,30px)}
+.manage-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.manage-card{border:1px solid var(--line);border-radius:18px;padding:18px;background:var(--paper)}
+.manage-card h3{margin:0 0 7px;font-size:19px}
+.manage-card p{color:var(--muted);font-size:13px;margin:0 0 15px}
+.manage-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:10px 0}
+.manage-row input,.manage-row select{border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:13px;padding:12px 14px;font:inherit;font-size:14px;min-width:0;flex:1;width:100%}
+.manage-row button{border:1px solid var(--line);border-radius:999px;padding:11px 14px;background:var(--surface);color:var(--ink);font:inherit;font-size:12px;font-weight:700;cursor:pointer}
+.manage-row button.primary-manage{background:var(--blue);color:white;border-color:var(--blue)}
+.manage-row button.remove-manage{color:#c0392b}
+.manage-row button:disabled{opacity:.4;cursor:not-allowed}
+.chapter-row{grid-template-columns:minmax(180px,1fr) minmax(300px,390px);gap:18px}
+.status-switch{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;padding:4px;border:1px solid var(--line);border-radius:15px;background:var(--surface-soft)}
+.status-switch button{appearance:none;border:0;border-radius:10px;background:transparent;color:var(--muted);font:inherit;font-size:12px;font-weight:700;line-height:1.2;padding:11px 7px;min-height:40px;cursor:pointer;transition:background .18s ease,color .18s ease,box-shadow .18s ease}
+.status-switch button:hover{color:var(--ink)}
+.status-switch button[aria-pressed="true"]{background:#536dfe;color:#fff;box-shadow:0 3px 10px #536dfe30}
+.status-switch button[data-status="পড়ছি"][aria-pressed="true"]{background:#d99518;color:#fff;box-shadow:0 3px 10px #d9951830}
+.status-switch button[data-status="পড়া শেষ"][aria-pressed="true"]{background:#159a70;color:#fff;box-shadow:0 3px 10px #159a7030}
+[data-theme="dark"] .status-switch{background:var(--surface-soft);border-color:var(--line)}
+[data-theme="dark"] .status-switch button[aria-pressed="true"]{color:#fff}
+@media(max-width:800px){.manage-grid{grid-template-columns:1fr}.chapter-row{grid-template-columns:1fr;gap:10px;padding:17px 0}.status-switch{width:100%;max-width:430px}.status-switch button{font-size:12px;padding:10px 5px}}
+@media(max-width:480px){.status-switch{max-width:none}.status-switch button{font-size:11px;padding:9px 2px}}
+""",1)
+
+# Remove management inputs from subjects and chapters sections; put manager section at the very bottom before quote/footer
+html=html.replace('<div class="manage-row"><input id="newSubjectName" maxlength="70" placeholder="Add a subject name..."><button class="primary-manage" type="button" onclick="addSubject()">+ Add subject</button></div><div class="subject-grid" id="subjectGrid"></div>',
+                  '<div class="subject-grid" id="subjectGrid"></div>')
+html=html.replace('<div class="manage-row"><input id="newChapterName" maxlength="100" placeholder="Add a chapter to selected subject..."><button class="primary-manage" type="button" onclick="addChapter()">+ Add chapter</button></div><div class="tools">',
+                  '<div class="tools">')
+manager = '''
+<section class="section wrap" id="manage">
+  <div class="section-head reveal"><div><div class="eyebrow">Manage your content</div><h2>Make it yours.</h2><p class="sub">সব যোগ, এডিট ও ডিলিট করার অপশন শুধু এই নিচের অংশে থাকবে।</p></div></div>
+  <div class="manage-panel reveal">
+    <div class="manage-grid">
+      <div class="manage-card">
+        <h3>Subjects</h3><p>সাবজেক্ট যোগ, নাম পরিবর্তন অথবা মুছে ফেলো।</p>
+        <div class="manage-row"><input id="newSubjectName" maxlength="70" placeholder="নতুন সাবজেক্টের নাম"><button class="primary-manage" type="button" onclick="addSubject()">＋ যোগ</button></div>
+        <div class="manage-row"><select id="manageSubjectSelect" aria-label="সাবজেক্ট বেছে নাও"></select></div>
+        <div class="manage-row"><input id="renameSubjectName" maxlength="70" placeholder="নতুন নাম লিখে এডিট করো"></div>
+        <div class="manage-row"><button type="button" onclick="renameSubject()">নাম পরিবর্তন</button><button class="remove-manage" type="button" onclick="deleteSelectedSubject()">সাবজেক্ট ডিলিট</button></div>
+      </div>
+      <div class="manage-card">
+        <h3>Chapters</h3><p>সাবজেক্ট বেছে নিয়ে চ্যাপ্টার যোগ, এডিট অথবা মুছে ফেলো।</p>
+        <div class="manage-row"><select id="manageChapterSubject" aria-label="চ্যাপ্টারের সাবজেক্ট"></select></div>
+        <div class="manage-row"><input id="newChapterName" maxlength="100" placeholder="নতুন চ্যাপ্টারের নাম"><button class="primary-manage" type="button" onclick="addChapter()">＋ যোগ</button></div>
+        <div class="manage-row"><select id="manageChapterSelect" aria-label="এডিট বা ডিলিটের চ্যাপ্টার"></select></div>
+        <div class="manage-row"><input id="renameChapterName" maxlength="100" placeholder="নতুন চ্যাপ্টারের নাম"></div>
+        <div class="manage-row"><button type="button" onclick="renameChapter()">নাম পরিবর্তন</button><button class="remove-manage" type="button" onclick="deleteSelectedChapter()">চ্যাপ্টার ডিলিট</button></div>
+      </div>
+    </div>
+  </div>
+</section>
+'''
+html=html.replace('<section class="quote wrap reveal">', manager+'\\n<section class="quote wrap reveal">',1)
+
+# Remove inline subject delete button, keeping subject cards clean
+old='''<button class="subject-delete" type="button" onclick="event.stopPropagation();deleteSubject('${s.replace(/'/g, "\\\\'")}')">Remove subject</button>'''
+html=html.replace(old,'')
+
+# replace renderSubjects to update manager selectors too
+old='''  const select=document.getElementById('subjectFilter');
+  const current=select.value;
+  select.innerHTML=Object.keys(chapters).map(s=>`<option>${escapeText(s)}</option>`).join('');
+  if(chapters[current]) select.value=current;
+  else if(Object.keys(chapters).length) select.value=Object.keys(chapters)[0];
+}'''
+new='''  const select=document.getElementById('subjectFilter');
+  const current=select.value;
+  select.innerHTML=Object.keys(chapters).map(s=>`<option>${escapeText(s)}</option>`).join('');
+  if(chapters[current]) select.value=current;
+  else if(Object.keys(chapters).length) select.value=Object.keys(chapters)[0];
+  const manageSubject=document.getElementById('manageSubjectSelect');
+  const manageChapterSubject=document.getElementById('manageChapterSubject');
+  const oldManageSubject=manageSubject.value, oldChapterSubject=manageChapterSubject.value;
+  const options=Object.keys(chapters).map(s=>`<option value="${escapeText(s)}">${escapeText(s)}</option>`).join('');
+  manageSubject.innerHTML=options || '<option value="">কোনো সাবজেক্ট নেই</option>';
+  manageChapterSubject.innerHTML=options || '<option value="">কোনো সাবজেক্ট নেই</option>';
+  if(chapters[oldManageSubject]) manageSubject.value=oldManageSubject;
+  if(chapters[oldChapterSubject]) manageChapterSubject.value=oldChapterSubject;
+  updateManagedChapterOptions();
+}'''
+if old not in html: print("renderSubjects pattern missing")
+html=html.replace(old,new,1)
+
+# replace add/delete chapter functions and add manager helpers
+old='''function addSubject(){
+  const input=document.getElementById('newSubjectName'), name=input.value.trim();
+  if(!name){input.focus();return}
+  if(Object.keys(chapters).some(s=>s.toLowerCase()===name.toLowerCase())){alert('This subject already exists.');return}
+  chapters[name]=[];
+  input.value=''; saveChapters(); renderSubjects(); render(); 
+}
+function deleteSubject(name){
+  if(!confirm(`Remove subject "${name}" and all its chapters?`)) return;
+  delete chapters[name];
+  Object.keys(states).forEach(k=>{if(k.startsWith(name+'|')) delete states[k]});
+  saveChapters(); saveStates(); renderSubjects(); render();
+}
+function addChapter(){
+  const input=document.getElementById('newChapterName'), name=input.value.trim();
+  const subject=document.getElementById('subjectFilter').value;
+  if(!name){input.focus();return}
+  if(!chapters[subject]){alert('Add a subject first.');return}
+  if(chapters[subject].some(c=>c.toLowerCase()===name.toLowerCase())){alert('This chapter already exists.');return}
+  chapters[subject].push(name); input.value=''; saveChapters(); render();
+}
+function deleteChapter(subject,name){
+  if(!confirm(`Remove chapter "${name}"?`)) return;
+  chapters[subject]=chapters[subject].filter(c=>c!==name);
+  delete states[subject+'|'+name]; saveChapters(); saveStates(); render();
+}'''
+new='''function addSubject(){
+  const input=document.getElementById('newSubjectName'), name=input.value.trim();
+  if(!name){input.focus();return}
+  if(Object.keys(chapters).some(s=>s.toLowerCase()===name.toLowerCase())){alert('এই সাবজেক্ট আগে থেকেই আছে।');return}
+  chapters[name]=[];
+  input.value=''; saveChapters(); renderSubjects(); render(); showManageMessage('সাবজেক্ট যোগ হয়েছে');
+}
+function deleteSubject(name){
+  if(!confirm(`“${name}” এবং এর সব চ্যাপ্টার ডিলিট করতে চাও?`)) return;
+  delete chapters[name];
+  Object.keys(states).forEach(k=>{if(k.startsWith(name+'|')) delete states[k]});
+  saveChapters(); saveStates(); renderSubjects(); render(); showManageMessage('সাবজেক্ট ডিলিট হয়েছে');
+}
+function deleteSelectedSubject(){
+  const name=document.getElementById('manageSubjectSelect').value;
+  if(name) deleteSubject(name);
+}
+function renameSubject(){
+  const oldName=document.getElementById('manageSubjectSelect').value;
+  const input=document.getElementById('renameSubjectName'), newName=input.value.trim();
+  if(!oldName || !newName){input.focus();return}
+  if(newName===oldName){showManageMessage('নাম একই আছে');return}
+  if(Object.keys(chapters).some(s=>s.toLowerCase()===newName.toLowerCase())){alert('এই নামে সাবজেক্ট আগে থেকেই আছে।');return}
+  const rebuilt={}; Object.keys(chapters).forEach(s=>{rebuilt[s===oldName?newName:s]=chapters[s]}); chapters=rebuilt;
+  Object.keys(states).forEach(k=>{if(k.startsWith(oldName+'|')){states[newName+k.slice(oldName.length)]=states[k];delete states[k]}});
+  saveChapters();saveStates();input.value='';renderSubjects();document.getElementById('subjectFilter').value=newName;document.getElementById('manageSubjectSelect').value=newName;document.getElementById('manageChapterSubject').value=newName;render();showManageMessage('সাবজেক্টের নাম বদলেছে');
+}
+function addChapter(){
+  const input=document.getElementById('newChapterName'), name=input.value.trim();
+  const subject=document.getElementById('manageChapterSubject').value;
+  if(!name){input.focus();return}
+  if(!subject || !chapters[subject]){alert('আগে একটি সাবজেক্ট যোগ করো।');return}
+  if(chapters[subject].some(c=>c.toLowerCase()===name.toLowerCase())){alert('এই চ্যাপ্টার আগে থেকেই আছে।');return}
+  chapters[subject].push(name); input.value=''; saveChapters(); renderSubjects();document.getElementById('subjectFilter').value=subject;render();showManageMessage('চ্যাপ্টার যোগ হয়েছে');
+}
+function updateManagedChapterOptions(){
+  const subject=document.getElementById('manageChapterSubject')?.value;
+  const select=document.getElementById('manageChapterSelect');
+  if(!select)return;
+  const old=select.value, arr=chapters[subject]||[];
+  select.innerHTML=arr.map(c=>`<option value="${escapeText(c)}">${escapeText(c)}</option>`).join('') || '<option value="">কোনো চ্যাপ্টার নেই</option>';
+  if(arr.includes(old))select.value=old;
+  const selected=select.value;
+  const rename=document.getElementById('renameChapterName');
+  if(rename && selected && !rename.dataset.edited) rename.value=selected;
+}
+function renameChapter(){
+  const subject=document.getElementById('manageChapterSubject').value;
+  const oldName=document.getElementById('manageChapterSelect').value;
+  const input=document.getElementById('renameChapterName'),newName=input.value.trim();
+  if(!subject||!oldName||!newName){input.focus();return}
+  if(newName===oldName){showManageMessage('নাম একই আছে');return}
+  if((chapters[subject]||[]).some(c=>c.toLowerCase()===newName.toLowerCase())){alert('এই নামে চ্যাপ্টার আগে থেকেই আছে।');return}
+  chapters[subject]=chapters[subject].map(c=>c===oldName?newName:c);
+  if(states[subject+'|'+oldName]!==undefined){states[subject+'|'+newName]=states[subject+'|'+oldName];delete states[subject+'|'+oldName]}
+  saveChapters();saveStates();renderSubjects();document.getElementById('subjectFilter').value=subject;render();updateManagedChapterOptions();showManageMessage('চ্যাপ্টারের নাম বদলেছে');
+}
+function deleteSelectedChapter(){
+  const subject=document.getElementById('manageChapterSubject').value;
+  const name=document.getElementById('manageChapterSelect').value;
+  if(subject&&name) deleteChapter(subject,name);
+}
+function deleteChapter(subject,name){
+  if(!confirm(`“${name}” চ্যাপ্টারটি ডিলিট করতে চাও?`)) return;
+  chapters[subject]=chapters[subject].filter(c=>c!==name);
+  delete states[subject+'|'+name]; saveChapters(); saveStates(); renderSubjects(); render();updateManagedChapterOptions();showManageMessage('চ্যাপ্টার ডিলিট হয়েছে');
+}
+function showManageMessage(message){const done=document.getElementById('doneText'); if(done)done.textContent=message;}
+document.addEventListener('change',e=>{
+  if(e.target.id==='manageChapterSubject')updateManagedChapterOptions();
+  if(e.target.id==='manageChapterSelect'){const input=document.getElementById('renameChapterName');if(input){input.value=e.target.value;delete input.dataset.edited;}}
+});
+document.getElementById('renameChapterName')?.addEventListener('input',e=>e.target.dataset.edited='1');'''
+if old not in html: print("function pattern missing")
+html=html.replace(old,new,1)
+
+# replace render chapter output with status switch buttons; no inline delete
+old='''else list.innerHTML=arr.map(c=>{const key=s+'|'+c,st=states[key]||'পড়া বাকি';return `<div class="chapter-row"><div>${escapeText(c)}<small>${escapeText(s)}</small></div><button type="button" class="chapter-delete" onclick="deleteChapter('${s.replace(/'/g, "\\\\'")}','${c.replace(/'/g, "\\\\'")}')">Remove</button><select aria-label="Status for ${c}" onchange="setStatus('${encodeURIComponent(key)}',this.value)"><option ${st==='পড়া বাকি'?'selected':''}>পড়া বাকি</option><option ${st==='পড়ছি'?'selected':''}>পড়ছি</option><option ${st==='পড়া শেষ'?'selected':''}>পড়া শেষ</option></select></div>`}).join('');updateProgress()}'''
+new='''else list.innerHTML=arr.map(c=>{const key=s+'|'+c,st=states[key]||'পড়া বাকি';const statuses=['পড়া বাকি','পড়ছি','পড়া শেষ'];return `<div class="chapter-row"><div>${escapeText(c)}<small>${escapeText(s)}</small></div><div class="status-switch" role="group" aria-label="${escapeText(c)} পড়ার অবস্থা">${statuses.map(status=>`<button type="button" data-status="${status}" aria-pressed="${st===status}" aria-label="${escapeText(c)}: ${status}" onclick="setStatus('${encodeURIComponent(key)}','${status}')">${status}</button>`).join('')}</div></div>`}).join('');updateProgress()}'''
+if old not in html: print("render pattern missing")
+html=html.replace(old,new,1)
+
+# add nav anchor to bottom manager
+html=html.replace('<a href="#chapters">Chapters</a></div>', '<a href="#chapters">Chapters</a><a href="#manage">Manage</a></div>',1)
+
+# update subjectFilter changes: sync manager chapter subject when selecting chapters normally is fine; management section selection remains independent.
+# Make chapter rename field follow selected chapter on initial and on selection.
+html=html.replace("renderSubjects();render();", "renderSubjects();render();updateManagedChapterOptions();", 1)
+
+out=Path("/mnt/data/tracker-managed-bottom.html")
+out.write_text(html,encoding="utf-8")
+print(out, out.stat().st_size)
+from pathlib import Path
+p=Path("/mnt/data/tracker-add-remove.html")
+html=p.read_text(encoding="utf-8")
+
+# CSS: append new styles before closing style, and remove prior inline control layout overrides
+html=html.replace("""
+/* Minimal subject/chapter management controls */
+.manage-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 18px}
+.manage-row input{border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:13px;padding:12px 14px;font:inherit;font-size:14px;min-width:0;flex:1}
+.manage-row button,.chapter-delete,.subject-delete{border:1px solid var(--line);border-radius:999px;padding:10px 14px;background:var(--surface);color:var(--ink);font:inherit;font-size:12px;font-weight:700;cursor:pointer}
+.manage-row button.primary-manage{background:var(--blue);color:white;border-color:var(--blue)}
+.chapter-delete,.subject-delete{color:#c0392b;background:var(--surface)}
+.subject{position:relative}
+.subject .subject-delete{margin-top:10px}
+.chapter-row{grid-template-columns:minmax(0,1fr) auto minmax(300px,390px)}
+.chapter-row .chapter-delete{white-space:nowrap}
+@media(max-width:800px){.chapter-row{grid-template-columns:1fr auto}.chapter-row .status-switch{grid-column:1/-1}.chapter-row .chapter-delete{justify-self:start}}
+@media(max-width:480px){.chapter-row{grid-template-columns:1fr auto}}
+""", """
+/* Bottom-only subject/chapter manager */
+.manage-panel{background:var(--surface);border:1px solid var(--line);border-radius:24px;padding:clamp(18px,4vw,30px)}
+.manage-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.manage-card{border:1px solid var(--line);border-radius:18px;padding:18px;background:var(--paper)}
+.manage-card h3{margin:0 0 7px;font-size:19px}
+.manage-card p{color:var(--muted);font-size:13px;margin:0 0 15px}
+.manage-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:10px 0}
+.manage-row input,.manage-row select{border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:13px;padding:12px 14px;font:inherit;font-size:14px;min-width:0;flex:1;width:100%}
+.manage-row button{border:1px solid var(--line);border-radius:999px;padding:11px 14px;background:var(--surface);color:var(--ink);font:inherit;font-size:12px;font-weight:700;cursor:pointer}
+.manage-row button.primary-manage{background:var(--blue);color:white;border-color:var(--blue)}
+.manage-row button.remove-manage{color:#c0392b}
+.manage-row button:disabled{opacity:.4;cursor:not-allowed}
+.chapter-row{grid-template-columns:minmax(180px,1fr) minmax(300px,390px);gap:18px}
+.status-switch{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;padding:4px;border:1px solid var(--line);border-radius:15px;background:var(--surface-soft)}
+.status-switch button{appearance:none;border:0;border-radius:10px;background:transparent;color:var(--muted);font:inherit;font-size:12px;font-weight:700;line-height:1.2;padding:11px 7px;min-height:40px;cursor:pointer;transition:background .18s ease,color .18s ease,box-shadow .18s ease}
+.status-switch button:hover{color:var(--ink)}
+.status-switch button[aria-pressed="true"]{background:#536dfe;color:#fff;box-shadow:0 3px 10px #536dfe30}
+.status-switch button[data-status="পড়ছি"][aria-pressed="true"]{background:#d99518;color:#fff;box-shadow:0 3px 10px #d9951830}
+.status-switch button[data-status="পড়া শেষ"][aria-pressed="true"]{background:#159a70;color:#fff;box-shadow:0 3px 10px #159a7030}
+[data-theme="dark"] .status-switch{background:var(--surface-soft);border-color:var(--line)}
+[data-theme="dark"] .status-switch button[aria-pressed="true"]{color:#fff}
+@media(max-width:800px){.manage-grid{grid-template-columns:1fr}.chapter-row{grid-template-columns:1fr;gap:10px;padding:17px 0}.status-switch{width:100%;max-width:430px}.status-switch button{font-size:12px;padding:10px 5px}}
+@media(max-width:480px){.status-switch{max-width:none}.status-switch button{font-size:11px;padding:9px 2px}}
+""",1)
+
+# Remove management inputs from subjects and chapters sections; put manager section at the very bottom before quote/footer
+html=html.replace('<div class="manage-row"><input id="newSubjectName" maxlength="70" placeholder="Add a subject name..."><button class="primary-manage" type="button" onclick="addSubject()">+ Add subject</button></div><div class="subject-grid" id="subjectGrid"></div>',
+                  '<div class="subject-grid" id="subjectGrid"></div>')
+html=html.replace('<div class="manage-row"><input id="newChapterName" maxlength="100" placeholder="Add a chapter to selected subject..."><button class="primary-manage" type="button" onclick="addChapter()">+ Add chapter</button></div><div class="tools">',
+                  '<div class="tools">')
+manager = '''
+<section class="section wrap" id="manage">
+  <div class="section-head reveal"><div><div class="eyebrow">Manage your content</div><h2>Make it yours.</h2><p class="sub">সব যোগ, এডিট ও ডিলিট করার অপশন শুধু এই নিচের অংশে থাকবে।</p></div></div>
+  <div class="manage-panel reveal">
+    <div class="manage-grid">
+      <div class="manage-card">
+        <h3>Subjects</h3><p>সাবজেক্ট যোগ, নাম পরিবর্তন অথবা মুছে ফেলো।</p>
+        <div class="manage-row"><input id="newSubjectName" maxlength="70" placeholder="নতুন সাবজেক্টের নাম"><button class="primary-manage" type="button" onclick="addSubject()">＋ যোগ</button></div>
+        <div class="manage-row"><select id="manageSubjectSelect" aria-label="সাবজেক্ট বেছে নাও"></select></div>
+        <div class="manage-row"><input id="renameSubjectName" maxlength="70" placeholder="নতুন নাম লিখে এডিট করো"></div>
+        <div class="manage-row"><button type="button" onclick="renameSubject()">নাম পরিবর্তন</button><button class="remove-manage" type="button" onclick="deleteSelectedSubject()">সাবজেক্ট ডিলিট</button></div>
+      </div>
+      <div class="manage-card">
+        <h3>Chapters</h3><p>সাবজেক্ট বেছে নিয়ে চ্যাপ্টার যোগ, এডিট অথবা মুছে ফেলো।</p>
+        <div class="manage-row"><select id="manageChapterSubject" aria-label="চ্যাপ্টারের সাবজেক্ট"></select></div>
+        <div class="manage-row"><input id="newChapterName" maxlength="100" placeholder="নতুন চ্যাপ্টারের নাম"><button class="primary-manage" type="button" onclick="addChapter()">＋ যোগ</button></div>
+        <div class="manage-row"><select id="manageChapterSelect" aria-label="এডিট বা ডিলিটের চ্যাপ্টার"></select></div>
+        <div class="manage-row"><input id="renameChapterName" maxlength="100" placeholder="নতুন চ্যাপ্টারের নাম"></div>
+        <div class="manage-row"><button type="button" onclick="renameChapter()">নাম পরিবর্তন</button><button class="remove-manage" type="button" onclick="deleteSelectedChapter()">চ্যাপ্টার ডিলিট</button></div>
+      </div>
+    </div>
+  </div>
+</section>
+'''
+html=html.replace('<section class="quote wrap reveal">', manager+'\\n<section class="quote wrap reveal">',1)
+
+# Remove inline subject delete button, keeping subject cards clean
+old='''<button class="subject-delete" type="button" onclick="event.stopPropagation();deleteSubject('${s.replace(/'/g, "\\\\'")}')">Remove subject</button>'''
+html=html.replace(old,'')
+
+# replace renderSubjects to update manager selectors too
+old='''  const select=document.getElementById('subjectFilter');
+  const current=select.value;
+  select.innerHTML=Object.keys(chapters).map(s=>`<option>${escapeText(s)}</option>`).join('');
+  if(chapters[current]) select.value=current;
+  else if(Object.keys(chapters).length) select.value=Object.keys(chapters)[0];
+}'''
+new='''  const select=document.getElementById('subjectFilter');
+  const current=select.value;
+  select.innerHTML=Object.keys(chapters).map(s=>`<option>${escapeText(s)}</option>`).join('');
+  if(chapters[current]) select.value=current;
+  else if(Object.keys(chapters).length) select.value=Object.keys(chapters)[0];
+  const manageSubject=document.getElementById('manageSubjectSelect');
+  const manageChapterSubject=document.getElementById('manageChapterSubject');
+  const oldManageSubject=manageSubject.value, oldChapterSubject=manageChapterSubject.value;
+  const options=Object.keys(chapters).map(s=>`<option value="${escapeText(s)}">${escapeText(s)}</option>`).join('');
+  manageSubject.innerHTML=options || '<option value="">কোনো সাবজেক্ট নেই</option>';
+  manageChapterSubject.innerHTML=options || '<option value="">কোনো সাবজেক্ট নেই</option>';
+  if(chapters[oldManageSubject]) manageSubject.value=oldManageSubject;
+  if(chapters[oldChapterSubject]) manageChapterSubject.value=oldChapterSubject;
+  updateManagedChapterOptions();
+}'''
+if old not in html: print("renderSubjects pattern missing")
+html=html.replace(old,new,1)
+
+# replace add/delete chapter functions and add manager helpers
+old='''function addSubject(){
+  const input=document.getElementById('newSubjectName'), name=input.value.trim();
+  if(!name){input.focus();return}
+  if(Object.keys(chapters).some(s=>s.toLowerCase()===name.toLowerCase())){alert('This subject already exists.');return}
+  chapters[name]=[];
+  input.value=''; saveChapters(); renderSubjects(); render(); 
+}
+function deleteSubject(name){
+  if(!confirm(`Remove subject "${name}" and all its chapters?`)) return;
+  delete chapters[name];
+  Object.keys(states).forEach(k=>{if(k.startsWith(name+'|')) delete states[k]});
+  saveChapters(); saveStates(); renderSubjects(); render();
+}
+function addChapter(){
+  const input=document.getElementById('newChapterName'), name=input.value.trim();
+  const subject=document.getElementById('subjectFilter').value;
+  if(!name){input.focus();return}
+  if(!chapters[subject]){alert('Add a subject first.');return}
+  if(chapters[subject].some(c=>c.toLowerCase()===name.toLowerCase())){alert('This chapter already exists.');return}
+  chapters[subject].push(name); input.value=''; saveChapters(); render();
+}
+function deleteChapter(subject,name){
+  if(!confirm(`Remove chapter "${name}"?`)) return;
+  chapters[subject]=chapters[subject].filter(c=>c!==name);
+  delete states[subject+'|'+name]; saveChapters(); saveStates(); render();
+}'''
+new='''function addSubject(){
+  const input=document.getElementById('newSubjectName'), name=input.value.trim();
+  if(!name){input.focus();return}
+  if(Object.keys(chapters).some(s=>s.toLowerCase()===name.toLowerCase())){alert('এই সাবজেক্ট আগে থেকেই আছে।');return}
+  chapters[name]=[];
+  input.value=''; saveChapters(); renderSubjects(); render(); showManageMessage('সাবজেক্ট যোগ হয়েছে');
+}
+function deleteSubject(name){
+  if(!confirm(`“${name}” এবং এর সব চ্যাপ্টার ডিলিট করতে চাও?`)) return;
+  delete chapters[name];
+  Object.keys(states).forEach(k=>{if(k.startsWith(name+'|')) delete states[k]});
+  saveChapters(); saveStates(); renderSubjects(); render(); showManageMessage('সাবজেক্ট ডিলিট হয়েছে');
+}
+function deleteSelectedSubject(){
+  const name=document.getElementById('manageSubjectSelect').value;
+  if(name) deleteSubject(name);
+}
+function renameSubject(){
+  const oldName=document.getElementById('manageSubjectSelect').value;
+  const input=document.getElementById('renameSubjectName'), newName=input.value.trim();
+  if(!oldName || !newName){input.focus();return}
+  if(newName===oldName){showManageMessage('নাম একই আছে');return}
+  if(Object.keys(chapters).some(s=>s.toLowerCase()===newName.toLowerCase())){alert('এই নামে সাবজেক্ট আগে থেকেই আছে।');return}
+  const rebuilt={}; Object.keys(chapters).forEach(s=>{rebuilt[s===oldName?newName:s]=chapters[s]}); chapters=rebuilt;
+  Object.keys(states).forEach(k=>{if(k.startsWith(oldName+'|')){states[newName+k.slice(oldName.length)]=states[k];delete states[k]}});
+  saveChapters();saveStates();input.value='';renderSubjects();document.getElementById('subjectFilter').value=newName;document.getElementById('manageSubjectSelect').value=newName;document.getElementById('manageChapterSubject').value=newName;render();showManageMessage('সাবজেক্টের নাম বদলেছে');
+}
+function addChapter(){
+  const input=document.getElementById('newChapterName'), name=input.value.trim();
+  const subject=document.getElementById('manageChapterSubject').value;
+  if(!name){input.focus();return}
+  if(!subject || !chapters[subject]){alert('আগে একটি সাবজেক্ট যোগ করো।');return}
+  if(chapters[subject].some(c=>c.toLowerCase()===name.toLowerCase())){alert('এই চ্যাপ্টার আগে থেকেই আছে।');return}
+  chapters[subject].push(name); input.value=''; saveChapters(); renderSubjects();document.getElementById('subjectFilter').value=subject;render();showManageMessage('চ্যাপ্টার যোগ হয়েছে');
+}
+function updateManagedChapterOptions(){
+  const subject=document.getElementById('manageChapterSubject')?.value;
+  const select=document.getElementById('manageChapterSelect');
+  if(!select)return;
+  const old=select.value, arr=chapters[subject]||[];
+  select.innerHTML=arr.map(c=>`<option value="${escapeText(c)}">${escapeText(c)}</option>`).join('') || '<option value="">কোনো চ্যাপ্টার নেই</option>';
+  if(arr.includes(old))select.value=old;
+  const selected=select.value;
+  const rename=document.getElementById('renameChapterName');
+  if(rename && selected && !rename.dataset.edited) rename.value=selected;
+}
+function renameChapter(){
+  const subject=document.getElementById('manageChapterSubject').value;
+  const oldName=document.getElementById('manageChapterSelect').value;
+  const input=document.getElementById('renameChapterName'),newName=input.value.trim();
+  if(!subject||!oldName||!newName){input.focus();return}
+  if(newName===oldName){showManageMessage('নাম একই আছে');return}
+  if((chapters[subject]||[]).some(c=>c.toLowerCase()===newName.toLowerCase())){alert('এই নামে চ্যাপ্টার আগে থেকেই আছে।');return}
+  chapters[subject]=chapters[subject].map(c=>c===oldName?newName:c);
+  if(states[subject+'|'+oldName]!==undefined){states[subject+'|'+newName]=states[subject+'|'+oldName];delete states[subject+'|'+oldName]}
+  saveChapters();saveStates();renderSubjects();document.getElementById('subjectFilter').value=subject;render();updateManagedChapterOptions();showManageMessage('চ্যাপ্টারের নাম বদলেছে');
+}
+function deleteSelectedChapter(){
+  const subject=document.getElementById('manageChapterSubject').value;
+  const name=document.getElementById('manageChapterSelect').value;
+  if(subject&&name) deleteChapter(subject,name);
+}
+function deleteChapter(subject,name){
+  if(!confirm(`“${name}” চ্যাপ্টারটি ডিলিট করতে চাও?`)) return;
+  chapters[subject]=chapters[subject].filter(c=>c!==name);
+  delete states[subject+'|'+name]; saveChapters(); saveStates(); renderSubjects(); render();updateManagedChapterOptions();showManageMessage('চ্যাপ্টার ডিলিট হয়েছে');
+}
+function showManageMessage(message){const done=document.getElementById('doneText'); if(done)done.textContent=message;}
+document.addEventListener('change',e=>{
+  if(e.target.id==='manageChapterSubject')updateManagedChapterOptions();
+  if(e.target.id==='manageChapterSelect'){const input=document.getElementById('renameChapterName');if(input){input.value=e.target.value;delete input.dataset.edited;}}
+});
+document.getElementById('renameChapterName')?.addEventListener('input',e=>e.target.dataset.edited='1');'''
+if old not in html: print("function pattern missing")
+html=html.replace(old,new,1)
+
+# replace render chapter output with status switch buttons; no inline delete
+old='''else list.innerHTML=arr.map(c=>{const key=s+'|'+c,st=states[key]||'পড়া বাকি';return `<div class="chapter-row"><div>${escapeText(c)}<small>${escapeText(s)}</small></div><button type="button" class="chapter-delete" onclick="deleteChapter('${s.replace(/'/g, "\\\\'")}','${c.replace(/'/g, "\\\\'")}')">Remove</button><select aria-label="Status for ${c}" onchange="setStatus('${encodeURIComponent(key)}',this.value)"><option ${st==='পড়া বাকি'?'selected':''}>পড়া বাকি</option><option ${st==='পড়ছি'?'selected':''}>পড়ছি</option><option ${st==='পড়া শেষ'?'selected':''}>পড়া শেষ</option></select></div>`}).join('');updateProgress()}'''
+new='''else list.innerHTML=arr.map(c=>{const key=s+'|'+c,st=states[key]||'পড়া বাকি';const statuses=['পড়া বাকি','পড়ছি','পড়া শেষ'];return `<div class="chapter-row"><div>${escapeText(c)}<small>${escapeText(s)}</small></div><div class="status-switch" role="group" aria-label="${escapeText(c)} পড়ার অবস্থা">${statuses.map(status=>`<button type="button" data-status="${status}" aria-pressed="${st===status}" aria-label="${escapeText(c)}: ${status}" onclick="setStatus('${encodeURIComponent(key)}','${status}')">${status}</button>`).join('')}</div></div>`}).join('');updateProgress()}'''
+if old not in html: print("render pattern missing")
+html=html.replace(old,new,1)
+
+# add nav anchor to bottom manager
+html=html.replace('<a href="#chapters">Chapters</a></div>', '<a href="#chapters">Chapters</a><a href="#manage">Manage</a></div>',1)
+
+# update subjectFilter changes: sync manager chapter subject when selecting chapters normally is fine; management section selection remains independent.
+# Make chapter rename field follow selected chapter on initial and on selection.
+html=html.replace("renderSubjects();render();", "renderSubjects();render();updateManagedChapterOptions();", 1)
+
+out=Path("/mnt/data/tracker-managed-bottom.html")
+out.write_text(html,encoding="utf-8")
+print(out, out.stat().st_size)
+from pathlib import Path
+p=Path("/mnt/data/tracker-add-remove.html")
+html=p.read_text(encoding="utf-8")
+
+# CSS: append new styles before closing style, and remove prior inline control layout overrides
+html=html.replace("""
+/* Minimal subject/chapter management controls */
+.manage-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 18px}
+.manage-row input{border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:13px;padding:12px 14px;font:inherit;font-size:14px;min-width:0;flex:1}
+.manage-row button,.chapter-delete,.subject-delete{border:1px solid var(--line);border-radius:999px;padding:10px 14px;background:var(--surface);color:var(--ink);font:inherit;font-size:12px;font-weight:700;cursor:pointer}
+.manage-row button.primary-manage{background:var(--blue);color:white;border-color:var(--blue)}
+.chapter-delete,.subject-delete{color:#c0392b;background:var(--surface)}
+.subject{position:relative}
+.subject .subject-delete{margin-top:10px}
+.chapter-row{grid-template-columns:minmax(0,1fr) auto minmax(300px,390px)}
+.chapter-row .chapter-delete{white-space:nowrap}
+@media(max-width:800px){.chapter-row{grid-template-columns:1fr auto}.chapter-row .status-switch{grid-column:1/-1}.chapter-row .chapter-delete{justify-self:start}}
+@media(max-width:480px){.chapter-row{grid-template-columns:1fr auto}}
+""", """
+/* Bottom-only subject/chapter manager */
+.manage-panel{background:var(--surface);border:1px solid var(--line);border-radius:24px;padding:clamp(18px,4vw,30px)}
+.manage-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.manage-card{border:1px solid var(--line);border-radius:18px;padding:18px;background:var(--paper)}
+.manage-card h3{margin:0 0 7px;font-size:19px}
+.manage-card p{color:var(--muted);font-size:13px;margin:0 0 15px}
+.manage-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:10px 0}
+.manage-row input,.manage-row select{border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:13px;padding:12px 14px;font:inherit;font-size:14px;min-width:0;flex:1;width:100%}
+.manage-row button{border:1px solid var(--line);border-radius:999px;padding:11px 14px;background:var(--surface);color:var(--ink);font:inherit;font-size:12px;font-weight:700;cursor:pointer}
+.manage-row button.primary-manage{background:var(--blue);color:white;border-color:var(--blue)}
+.manage-row button.remove-manage{color:#c0392b}
+.manage-row button:disabled{opacity:.4;cursor:not-allowed}
+.chapter-row{grid-template-columns:minmax(180px,1fr) minmax(300px,390px);gap:18px}
+.status-switch{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;padding:4px;border:1px solid var(--line);border-radius:15px;background:var(--surface-soft)}
+.status-switch button{appearance:none;border:0;border-radius:10px;background:transparent;color:var(--muted);font:inherit;font-size:12px;font-weight:700;line-height:1.2;padding:11px 7px;min-height:40px;cursor:pointer;transition:background .18s ease,color .18s ease,box-shadow .18s ease}
+.status-switch button:hover{color:var(--ink)}
+.status-switch button[aria-pressed="true"]{background:#536dfe;color:#fff;box-shadow:0 3px 10px #536dfe30}
+.status-switch button[data-status="পড়ছি"][aria-pressed="true"]{background:#d99518;color:#fff;box-shadow:0 3px 10px #d9951830}
+.status-switch button[data-status="পড়া শেষ"][aria-pressed="true"]{background:#159a70;color:#fff;box-shadow:0 3px 10px #159a7030}
+[data-theme="dark"] .status-switch{background:var(--surface-soft);border-color:var(--line)}
+[data-theme="dark"] .status-switch button[aria-pressed="true"]{color:#fff}
+@media(max-width:800px){.manage-grid{grid-template-columns:1fr}.chapter-row{grid-template-columns:1fr;gap:10px;padding:17px 0}.status-switch{width:100%;max-width:430px}.status-switch button{font-size:12px;padding:10px 5px}}
+@media(max-width:480px){.status-switch{max-width:none}.status-switch button{font-size:11px;padding:9px 2px}}
+""",1)
+
+# Remove management inputs from subjects and chapters sections; put manager section at the very bottom before quote/footer
+html=html.replace('<div class="manage-row"><input id="newSubjectName" maxlength="70" placeholder="Add a subject name..."><button class="primary-manage" type="button" onclick="addSubject()">+ Add subject</button></div><div class="subject-grid" id="subjectGrid"></div>',
+                  '<div class="subject-grid" id="subjectGrid"></div>')
+html=html.replace('<div class="manage-row"><input id="newChapterName" maxlength="100" placeholder="Add a chapter to selected subject..."><button class="primary-manage" type="button" onclick="addChapter()">+ Add chapter</button></div><div class="tools">',
+                  '<div class="tools">')
+manager = '''
+<section class="section wrap" id="manage">
+  <div class="section-head reveal"><div><div class="eyebrow">Manage your content</div><h2>Make it yours.</h2><p class="sub">সব যোগ, এডিট ও ডিলিট করার অপশন শুধু এই নিচের অংশে থাকবে।</p></div></div>
+  <div class="manage-panel reveal">
+    <div class="manage-grid">
+      <div class="manage-card">
+        <h3>Subjects</h3><p>সাবজেক্ট যোগ, নাম পরিবর্তন অথবা মুছে ফেলো।</p>
+        <div class="manage-row"><input id="newSubjectName" maxlength="70" placeholder="নতুন সাবজেক্টের নাম"><button class="primary-manage" type="button" onclick="addSubject()">＋ যোগ</button></div>
+        <div class="manage-row"><select id="manageSubjectSelect" aria-label="সাবজেক্ট বেছে নাও"></select></div>
+        <div class="manage-row"><input id="renameSubjectName" maxlength="70" placeholder="নতুন নাম লিখে এডিট করো"></div>
+        <div class="manage-row"><button type="button" onclick="renameSubject()">নাম পরিবর্তন</button><button class="remove-manage" type="button" onclick="deleteSelectedSubject()">সাবজেক্ট ডিলিট</button></div>
+      </div>
+      <div class="manage-card">
+        <h3>Chapters</h3><p>সাবজেক্ট বেছে নিয়ে চ্যাপ্টার যোগ, এডিট অথবা মুছে ফেলো।</p>
+        <div class="manage-row"><select id="manageChapterSubject" aria-label="চ্যাপ্টারের সাবজেক্ট"></select></div>
+        <div class="manage-row"><input id="newChapterName" maxlength="100" placeholder="নতুন চ্যাপ্টারের নাম"><button class="primary-manage" type="button" onclick="addChapter()">＋ যোগ</button></div>
+        <div class="manage-row"><select id="manageChapterSelect" aria-label="এডিট বা ডিলিটের চ্যাপ্টার"></select></div>
+        <div class="manage-row"><input id="renameChapterName" maxlength="100" placeholder="নতুন চ্যাপ্টারের নাম"></div>
+        <div class="manage-row"><button type="button" onclick="renameChapter()">নাম পরিবর্তন</button><button class="remove-manage" type="button" onclick="deleteSelectedChapter()">চ্যাপ্টার ডিলিট</button></div>
+      </div>
+    </div>
+  </div>
+</section>
+'''
+html=html.replace('<section class="quote wrap reveal">', manager+'\\n<section class="quote wrap reveal">',1)
+
+# Remove inline subject delete button, keeping subject cards clean
+old='''<button class="subject-delete" type="button" onclick="event.stopPropagation();deleteSubject('${s.replace(/'/g, "\\\\'")}')">Remove subject</button>'''
+html=html.replace(old,'')
+
+# replace renderSubjects to update manager selectors too
+old='''  const select=document.getElementById('subjectFilter');
+  const current=select.value;
+  select.innerHTML=Object.keys(chapters).map(s=>`<option>${escapeText(s)}</option>`).join('');
+  if(chapters[current]) select.value=current;
+  else if(Object.keys(chapters).length) select.value=Object.keys(chapters)[0];
+}'''
+new='''  const select=document.getElementById('subjectFilter');
+  const current=select.value;
+  select.innerHTML=Object.keys(chapters).map(s=>`<option>${escapeText(s)}</option>`).join('');
+  if(chapters[current]) select.value=current;
+  else if(Object.keys(chapters).length) select.value=Object.keys(chapters)[0];
+  const manageSubject=document.getElementById('manageSubjectSelect');
+  const manageChapterSubject=document.getElementById('manageChapterSubject');
+  const oldManageSubject=manageSubject.value, oldChapterSubject=manageChapterSubject.value;
+  const options=Object.keys(chapters).map(s=>`<option value="${escapeText(s)}">${escapeText(s)}</option>`).join('');
+  manageSubject.innerHTML=options || '<option value="">কোনো সাবজেক্ট নেই</option>';
+  manageChapterSubject.innerHTML=options || '<option value="">কোনো সাবজেক্ট নেই</option>';
+  if(chapters[oldManageSubject]) manageSubject.value=oldManageSubject;
+  if(chapters[oldChapterSubject]) manageChapterSubject.value=oldChapterSubject;
+  updateManagedChapterOptions();
+}'''
+if old not in html: print("renderSubjects pattern missing")
+html=html.replace(old,new,1)
+
+# replace add/delete chapter functions and add manager helpers
+old='''function addSubject(){
+  const input=document.getElementById('newSubjectName'), name=input.value.trim();
+  if(!name){input.focus();return}
+  if(Object.keys(chapters).some(s=>s.toLowerCase()===name.toLowerCase())){alert('This subject already exists.');return}
+  chapters[name]=[];
+  input.value=''; saveChapters(); renderSubjects(); render(); 
+}
+function deleteSubject(name){
+  if(!confirm(`Remove subject "${name}" and all its chapters?`)) return;
+  delete chapters[name];
+  Object.keys(states).forEach(k=>{if(k.startsWith(name+'|')) delete states[k]});
+  saveChapters(); saveStates(); renderSubjects(); render();
+}
+function addChapter(){
+  const input=document.getElementById('newChapterName'), name=input.value.trim();
+  const subject=document.getElementById('subjectFilter').value;
+  if(!name){input.focus();return}
+  if(!chapters[subject]){alert('Add a subject first.');return}
+  if(chapters[subject].some(c=>c.toLowerCase()===name.toLowerCase())){alert('This chapter already exists.');return}
+  chapters[subject].push(name); input.value=''; saveChapters(); render();
+}
+function deleteChapter(subject,name){
+  if(!confirm(`Remove chapter "${name}"?`)) return;
+  chapters[subject]=chapters[subject].filter(c=>c!==name);
+  delete states[subject+'|'+name]; saveChapters(); saveStates(); render();
+}'''
+new='''function addSubject(){
+  const input=document.getElementById('newSubjectName'), name=input.value.trim();
+  if(!name){input.focus();return}
+  if(Object.keys(chapters).some(s=>s.toLowerCase()===name.toLowerCase())){alert('এই সাবজেক্ট আগে থেকেই আছে।');return}
+  chapters[name]=[];
+  input.value=''; saveChapters(); renderSubjects(); render(); showManageMessage('সাবজেক্ট যোগ হয়েছে');
+}
+function deleteSubject(name){
+  if(!confirm(`“${name}” এবং এর সব চ্যাপ্টার ডিলিট করতে চাও?`)) return;
+  delete chapters[name];
+  Object.keys(states).forEach(k=>{if(k.startsWith(name+'|')) delete states[k]});
+  saveChapters(); saveStates(); renderSubjects(); render(); showManageMessage('সাবজেক্ট ডিলিট হয়েছে');
+}
+function deleteSelectedSubject(){
+  const name=document.getElementById('manageSubjectSelect').value;
+  if(name) deleteSubject(name);
+}
+function renameSubject(){
+  const oldName=document.getElementById('manageSubjectSelect').value;
+  const input=document.getElementById('renameSubjectName'), newName=input.value.trim();
+  if(!oldName || !newName){input.focus();return}
+  if(newName===oldName){showManageMessage('নাম একই আছে');return}
+  if(Object.keys(chapters).some(s=>s.toLowerCase()===newName.toLowerCase())){alert('এই নামে সাবজেক্ট আগে থেকেই আছে।');return}
+  const rebuilt={}; Object.keys(chapters).forEach(s=>{rebuilt[s===oldName?newName:s]=chapters[s]}); chapters=rebuilt;
+  Object.keys(states).forEach(k=>{if(k.startsWith(oldName+'|')){states[newName+k.slice(oldName.length)]=states[k];delete states[k]}});
+  saveChapters();saveStates();input.value='';renderSubjects();document.getElementById('subjectFilter').value=newName;document.getElementById('manageSubjectSelect').value=newName;document.getElementById('manageChapterSubject').value=newName;render();showManageMessage('সাবজেক্টের নাম বদলেছে');
+}
+function addChapter(){
+  const input=document.getElementById('newChapterName'), name=input.value.trim();
+  const subject=document.getElementById('manageChapterSubject').value;
+  if(!name){input.focus();return}
+  if(!subject || !chapters[subject]){alert('আগে একটি সাবজেক্ট যোগ করো।');return}
+  if(chapters[subject].some(c=>c.toLowerCase()===name.toLowerCase())){alert('এই চ্যাপ্টার আগে থেকেই আছে।');return}
+  chapters[subject].push(name); input.value=''; saveChapters(); renderSubjects();document.getElementById('subjectFilter').value=subject;render();showManageMessage('চ্যাপ্টার যোগ হয়েছে');
+}
+function updateManagedChapterOptions(){
+  const subject=document.getElementById('manageChapterSubject')?.value;
+  const select=document.getElementById('manageChapterSelect');
+  if(!select)return;
+  const old=select.value, arr=chapters[subject]||[];
+  select.innerHTML=arr.map(c=>`<option value="${escapeText(c)}">${escapeText(c)}</option>`).join('') || '<option value="">কোনো চ্যাপ্টার নেই</option>';
+  if(arr.includes(old))select.value=old;
+  const selected=select.value;
+  const rename=document.getElementById('renameChapterName');
+  if(rename && selected && !rename.dataset.edited) rename.value=selected;
+}
+function renameChapter(){
+  const subject=document.getElementById('manageChapterSubject').value;
+  const oldName=document.getElementById('manageChapterSelect').value;
+  const input=document.getElementById('renameChapterName'),newName=input.value.trim();
+  if(!subject||!oldName||!newName){input.focus();return}
+  if(newName===oldName){showManageMessage('নাম একই আছে');return}
+  if((chapters[subject]||[]).some(c=>c.toLowerCase()===newName.toLowerCase())){alert('এই নামে চ্যাপ্টার আগে থেকেই আছে।');return}
+  chapters[subject]=chapters[subject].map(c=>c===oldName?newName:c);
+  if(states[subject+'|'+oldName]!==undefined){states[subject+'|'+newName]=states[subject+'|'+oldName];delete states[subject+'|'+oldName]}
+  saveChapters();saveStates();renderSubjects();document.getElementById('subjectFilter').value=subject;render();updateManagedChapterOptions();showManageMessage('চ্যাপ্টারের নাম বদলেছে');
+}
+function deleteSelectedChapter(){
+  const subject=document.getElementById('manageChapterSubject').value;
+  const name=document.getElementById('manageChapterSelect').value;
+  if(subject&&name) deleteChapter(subject,name);
+}
+function deleteChapter(subject,name){
+  if(!confirm(`“${name}” চ্যাপ্টারটি ডিলিট করতে চাও?`)) return;
+  chapters[subject]=chapters[subject].filter(c=>c!==name);
+  delete states[subject+'|'+name]; saveChapters(); saveStates(); renderSubjects(); render();updateManagedChapterOptions();showManageMessage('চ্যাপ্টার ডিলিট হয়েছে');
+}
+function showManageMessage(message){const done=document.getElementById('doneText'); if(done)done.textContent=message;}
+document.addEventListener('change',e=>{
+  if(e.target.id==='manageChapterSubject')updateManagedChapterOptions();
+  if(e.target.id==='manageChapterSelect'){const input=document.getElementById('renameChapterName');if(input){input.value=e.target.value;delete input.dataset.edited;}}
+});
+document.getElementById('renameChapterName')?.addEventListener('input',e=>e.target.dataset.edited='1');'''
+if old not in html: print("function pattern missing")
+html=html.replace(old,new,1)
+
+# replace render chapter output with status switch buttons; no inline delete
+old='''else list.innerHTML=arr.map(c=>{const key=s+'|'+c,st=states[key]||'পড়া বাকি';return `<div class="chapter-row"><div>${escapeText(c)}<small>${escapeText(s)}</small></div><button type="button" class="chapter-delete" onclick="deleteChapter('${s.replace(/'/g, "\\\\'")}','${c.replace(/'/g, "\\\\'")}')">Remove</button><select aria-label="Status for ${c}" onchange="setStatus('${encodeURIComponent(key)}',this.value)"><option ${st==='পড়া বাকি'?'selected':''}>পড়া বাকি</option><option ${st==='পড়ছি'?'selected':''}>পড়ছি</option><option ${st==='পড়া শেষ'?'selected':''}>পড়া শেষ</option></select></div>`}).join('');updateProgress()}'''
+new='''else list.innerHTML=arr.map(c=>{const key=s+'|'+c,st=states[key]||'পড়া বাকি';const statuses=['পড়া বাকি','পড়ছি','পড়া শেষ'];return `<div class="chapter-row"><div>${escapeText(c)}<small>${escapeText(s)}</small></div><div class="status-switch" role="group" aria-label="${escapeText(c)} পড়ার অবস্থা">${statuses.map(status=>`<button type="button" data-status="${status}" aria-pressed="${st===status}" aria-label="${escapeText(c)}: ${status}" onclick="setStatus('${encodeURIComponent(key)}','${status}')">${status}</button>`).join('')}</div></div>`}).join('');updateProgress()}'''
+if old not in html: print("render pattern missing")
+html=html.replace(old,new,1)
+
+# add nav anchor to bottom manager
+html=html.replace('<a href="#chapters">Chapters</a></div>', '<a href="#chapters">Chapters</a><a href="#manage">Manage</a></div>',1)
+
+# update subjectFilter changes: sync manager chapter subject when selecting chapters normally is fine; management section selection remains independent.
+# Make chapter rename field follow selected chapter on initial and on selection.
+html=html.replace("renderSubjects();render();", "renderSubjects();render();updateManagedChapterOptions();", 1)
+
+out=Path("/mnt/data/tracker-managed-bottom.html")
+out.write_text(html,encoding="utf-8")
+print(out, out.stat().st_size)
 
